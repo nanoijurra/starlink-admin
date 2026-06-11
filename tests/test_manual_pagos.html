@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prueba manual - pagos.js</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 24px;
+      color: #1f2933;
+      background: #f7f9fb;
+    }
+
+    main {
+      max-width: 920px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 8px;
+    }
+
+    .status {
+      display: inline-block;
+      margin: 16px 0;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-weight: 700;
+      background: #e9eef5;
+    }
+
+    .status.ok {
+      color: #0f5132;
+      background: #d1e7dd;
+    }
+
+    .status.fail {
+      color: #842029;
+      background: #f8d7da;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+    }
+
+    th,
+    td {
+      padding: 10px;
+      border-bottom: 1px solid #d9e2ec;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #edf2f7;
+    }
+
+    .pass {
+      color: #0f5132;
+      font-weight: 700;
+    }
+
+    .fail {
+      color: #842029;
+      font-weight: 700;
+    }
+
+    pre {
+      overflow: auto;
+      padding: 12px;
+      background: #111827;
+      color: #f9fafb;
+      border-radius: 6px;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Prueba manual de pagos.js</h1>
+    <p>Validacion de descomponerPagoSegunCargo para pagos mixtos, parciales, simples y excedentes.</p>
+
+    <div id="status" class="status">Ejecutando prueba...</div>
+    <div id="results"></div>
+    <pre id="raw"></pre>
+  </main>
+
+  <script type="module">
+    const statusNode = document.getElementById('status');
+    const resultsNode = document.getElementById('results');
+    const rawNode = document.getElementById('raw');
+
+    const cases = [
+      {
+        name: 'Fundador paga compra inicial + abono',
+        montoPagado: 23663.98,
+        cargo: {
+          monto_a_pagar: 23663.98,
+          abono_base: 1346.43,
+          cargo_equipo: 22317.55,
+          concepto_equipo: 'COMPRA_INICIAL'
+        },
+        expected: [
+          { concepto: 'COMPRA_INICIAL', monto: 22317.55 },
+          { concepto: 'ABONO', monto: 1346.43 }
+        ]
+      },
+      {
+        name: 'Ingresante posterior paga regularizacion + abono',
+        montoPagado: 23190.70,
+        cargo: {
+          monto_a_pagar: 23190.70,
+          abono_base: 1319.50,
+          cargo_equipo: 21871.20,
+          concepto_equipo: 'REGULARIZACION'
+        },
+        expected: [
+          { concepto: 'REGULARIZACION', monto: 21871.20 },
+          { concepto: 'ABONO', monto: 1319.50 }
+        ]
+      },
+      {
+        name: 'Pago parcial de fundador',
+        montoPagado: 10000,
+        cargo: {
+          monto_a_pagar: 23663.98,
+          abono_base: 1346.43,
+          cargo_equipo: 22317.55,
+          concepto_equipo: 'COMPRA_INICIAL'
+        },
+        expected: [
+          { concepto: 'COMPRA_INICIAL', monto: 10000 }
+        ]
+      },
+      {
+        name: 'Cargo solo abono',
+        montoPagado: 1346.43,
+        cargo: {
+          monto_a_pagar: 1346.43,
+          abono_base: 1346.43,
+          cargo_equipo: 0,
+          concepto_equipo: null
+        },
+        expected: [
+          { concepto: 'ABONO', monto: 1346.43 }
+        ]
+      },
+      {
+        name: 'Pago excedente',
+        montoPagado: 24000,
+        cargo: {
+          monto_a_pagar: 23663.98,
+          abono_base: 1346.43,
+          cargo_equipo: 22317.55,
+          concepto_equipo: 'COMPRA_INICIAL'
+        },
+        expectedError: true,
+        expected: 'Error: no debe imputar excedente automaticamente'
+      }
+    ];
+
+    function sameMoney(left, right) {
+      return Math.abs(Number(left) - Number(right)) < 0.001;
+    }
+
+    function sameResult(actual, expected) {
+      if (!Array.isArray(actual) || !Array.isArray(expected)) return false;
+      if (actual.length !== expected.length) return false;
+
+      return actual.every((item, index) => (
+        item.concepto === expected[index].concepto &&
+        sameMoney(item.monto, expected[index].monto)
+      ));
+    }
+
+    function printable(value) {
+      return typeof value === 'string' ? value : JSON.stringify(value);
+    }
+
+    function runCase(descomponerPagoSegunCargo, testCase) {
+      try {
+        const actual = descomponerPagoSegunCargo(testCase.montoPagado, testCase.cargo);
+        const ok = testCase.expectedError ? false : sameResult(actual, testCase.expected);
+        return {
+          caso: testCase.name,
+          obtenido: actual,
+          esperado: testCase.expected,
+          estado: ok ? 'OK' : 'FALLA'
+        };
+      } catch (error) {
+        const actual = `Error: ${error.message || String(error)}`;
+        const ok = Boolean(testCase.expectedError);
+        return {
+          caso: testCase.name,
+          obtenido: actual,
+          esperado: testCase.expected,
+          estado: ok ? 'OK' : 'FALLA'
+        };
+      }
+    }
+
+    function render(results) {
+      const failures = results.filter((result) => result.estado !== 'OK');
+      const rows = results.map((result) => `
+        <tr>
+          <td>${result.caso}</td>
+          <td><pre>${printable(result.obtenido)}</pre></td>
+          <td><pre>${printable(result.esperado)}</pre></td>
+          <td class="${result.estado === 'OK' ? 'pass' : 'fail'}">${result.estado}</td>
+        </tr>
+      `).join('');
+
+      statusNode.textContent = failures.length === 0 ? 'PRUEBA OK' : 'PRUEBA FALLIDA';
+      statusNode.className = `status ${failures.length === 0 ? 'ok' : 'fail'}`;
+      resultsNode.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>Caso</th>
+              <th>Obtenido</th>
+              <th>Esperado</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+      rawNode.textContent = failures.length === 0
+        ? JSON.stringify(results, null, 2)
+        : `Fallos:\n${failures.map((failure) => failure.caso).join('\n')}\n\n${JSON.stringify(results, null, 2)}`;
+    }
+
+    try {
+      const { descomponerPagoSegunCargo } = await import('../js/pagos.js');
+      const results = cases.map((testCase) => runCase(descomponerPagoSegunCargo, testCase));
+      const failures = results.filter((result) => result.estado !== 'OK');
+
+      console.log('Resultado prueba manual pagos.js', results);
+      if (failures.length > 0) {
+        console.error('PRUEBA FALLIDA', failures);
+      } else {
+        console.log('PRUEBA OK');
+      }
+
+      render(results);
+    } catch (error) {
+      statusNode.textContent = 'PRUEBA FALLIDA';
+      statusNode.className = 'status fail';
+      resultsNode.textContent = 'No se pudo ejecutar la prueba.';
+      rawNode.textContent = error?.stack || String(error);
+      console.error('PRUEBA FALLIDA', error);
+    }
+  </script>
+</body>
+</html>

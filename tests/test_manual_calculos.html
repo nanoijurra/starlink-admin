@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prueba manual - calculos.js</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 24px;
+      color: #1f2933;
+      background: #f7f9fb;
+    }
+
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 8px;
+    }
+
+    .status {
+      display: inline-block;
+      margin: 16px 0;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-weight: 700;
+      background: #e9eef5;
+    }
+
+    .status.ok {
+      color: #0f5132;
+      background: #d1e7dd;
+    }
+
+    .status.fail {
+      color: #842029;
+      background: #f8d7da;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+    }
+
+    th,
+    td {
+      padding: 10px;
+      border-bottom: 1px solid #d9e2ec;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #edf2f7;
+    }
+
+    .pass {
+      color: #0f5132;
+      font-weight: 700;
+    }
+
+    .fail {
+      color: #842029;
+      font-weight: 700;
+    }
+
+    pre {
+      overflow: auto;
+      padding: 12px;
+      background: #111827;
+      color: #f9fafb;
+      border-radius: 6px;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Prueba manual de calculos.js</h1>
+    <p>Validacion del modelo mensual con abono, compra inicial, regularizacion y saldo compensatorio.</p>
+
+    <div id="status" class="status">Ejecutando prueba...</div>
+    <div id="results"></div>
+    <pre id="raw"></pre>
+  </main>
+
+  <script type="module">
+    const statusNode = document.getElementById('status');
+    const resultsNode = document.getElementById('results');
+    const rawNode = document.getElementById('raw');
+
+    const config = {
+      compra_equipo: 1077399,
+      recargo_compra_pct: 1.5,
+      abono_mensual: 65000,
+      recargo_abono_pct: 1.5,
+      fundadores_iniciales: 49
+    };
+
+    const fundadores = Array.from({ length: 49 }, (_, index) => ({
+      id: index + 1,
+      nombre: `Fundador ${index + 1}`,
+      estado: 'ACTIVO',
+      es_fundador: true
+    }));
+    const pagoCompraInicialCompleta = fundadores.map((persona) => ({
+      persona_id: persona.id,
+      concepto: 'COMPRA_INICIAL',
+      monto: 22317.55
+    }));
+
+    const expected = [
+      ['Caso A total_equipo_actualizado', 1093559.99],
+      ['Caso A total_abono_actualizado', 65975],
+      ['Caso A usuarios_activos', 49],
+      ['Caso A abono_base', 1346.43],
+      ['Caso A aporte_equipo_objetivo_por_persona', 22317.55],
+      ['Caso A fundador cargo_equipo', 22317.55],
+      ['Caso A fundador monto_a_pagar', 23663.98],
+      ['Caso A fundador concepto_equipo', 'COMPRA_INICIAL'],
+      ['Caso A suma_cargos', 1159535.02],
+      ['Caso A diferencia_redondeo', 0],
+      ['Caso A ajustes_redondeo', 0],
+      ['Caso B fundador cargo_equipo', 0],
+      ['Caso B fundador monto_a_pagar', 1346.43],
+      ['Caso B fundador concepto_equipo', null],
+      ['Caso B suma_cargos', 65975.07],
+      ['Caso B diferencia_redondeo', 0],
+      ['Caso B ajustes_redondeo', 0],
+      ['Caso C usuarios_activos', 50],
+      ['Caso C aporte_equipo_objetivo_por_persona', 21871.2],
+      ['Caso C fundador saldo_compensatorio', 446.35],
+      ['Caso C fundador compensacion_aplicada', 446.35],
+      ['Caso C fundador monto_a_pagar', 873.1],
+      ['Caso C fundador ajuste_redondeo', -0.05],
+      ['Caso C ingresante cargo_equipo', 21871.2],
+      ['Caso C ingresante concepto_equipo', 'REGULARIZACION'],
+      ['Caso C ingresante monto_a_pagar', 23190.7],
+      ['Caso C suma_cargos', 65975],
+      ['Caso C diferencia_redondeo', 0],
+      ['Caso C ajustes_redondeo', 1],
+      ['Caso C ajuste es centavos', true],
+      ['Caso C sin montos negativos', true]
+    ];
+
+    function isSameValue(actual, expectedValue) {
+      if (typeof expectedValue === 'number') {
+        return Math.abs(Number(actual) - expectedValue) < 0.001;
+      }
+      return actual === expectedValue;
+    }
+
+    function printable(value) {
+      return value === null || typeof value === 'string' ? String(value) : JSON.stringify(value);
+    }
+
+    function render(rows, actual) {
+      const failures = rows.filter((row) => !row.ok);
+      statusNode.textContent = failures.length === 0 ? 'PRUEBA OK' : 'PRUEBA FALLIDA';
+      statusNode.className = `status ${failures.length === 0 ? 'ok' : 'fail'}`;
+      resultsNode.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>Caso</th>
+              <th>Obtenido</th>
+              <th>Esperado</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr>
+                <td>${row.label}</td>
+                <td>${printable(row.actual)}</td>
+                <td>${printable(row.expected)}</td>
+                <td class="${row.ok ? 'pass' : 'fail'}">${row.ok ? 'OK' : 'FALLA'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+      rawNode.textContent = failures.length === 0
+        ? JSON.stringify(actual, null, 2)
+        : `Fallos:\n${failures.map((failure) => failure.label).join('\n')}\n\n${JSON.stringify(actual, null, 2)}`;
+    }
+
+    try {
+      const { calcularCargosMensuales } = await import('../js/calculos.js');
+      const casoA = calcularCargosMensuales(config, fundadores, [], '2026-07');
+      const casoB = calcularCargosMensuales(config, fundadores, pagoCompraInicialCompleta, '2026-07');
+      const ingresantePosterior = {
+        id: 50,
+        nombre: 'Ingresante posterior',
+        estado: 'ACTIVO',
+        es_fundador: false
+      };
+      const casoC = calcularCargosMensuales(
+        config,
+        [...fundadores, ingresantePosterior],
+        pagoCompraInicialCompleta,
+        '2026-07'
+      );
+      const fundadorA = casoA.cargos.find((cargo) => cargo.persona_id === 1);
+      const fundadorB = casoB.cargos.find((cargo) => cargo.persona_id === 1);
+      const fundadorC = casoC.cargos.find((cargo) => cargo.persona_id === 1);
+      const ingresanteC = casoC.cargos.find((cargo) => cargo.persona_id === 50);
+      const ajustesA = casoA.cargos.filter((cargo) => cargo.ajuste_redondeo);
+      const ajustesB = casoB.cargos.filter((cargo) => cargo.ajuste_redondeo);
+      const ajustesC = casoC.cargos.filter((cargo) => cargo.ajuste_redondeo);
+      const actual = {
+        'Caso A total_equipo_actualizado': casoA.total_equipo_actualizado,
+        'Caso A total_abono_actualizado': casoA.total_abono_actualizado,
+        'Caso A usuarios_activos': casoA.usuarios_activos,
+        'Caso A abono_base': casoA.abono_base,
+        'Caso A aporte_equipo_objetivo_por_persona': casoA.aporte_equipo_objetivo_por_persona,
+        'Caso A fundador cargo_equipo': fundadorA?.cargo_equipo,
+        'Caso A fundador monto_a_pagar': fundadorA?.monto_a_pagar,
+        'Caso A fundador concepto_equipo': fundadorA?.concepto_equipo,
+        'Caso A suma_cargos': casoA.suma_cargos,
+        'Caso A diferencia_redondeo': casoA.diferencia_redondeo,
+        'Caso A ajustes_redondeo': ajustesA.length,
+        'Caso B fundador cargo_equipo': fundadorB?.cargo_equipo,
+        'Caso B fundador monto_a_pagar': fundadorB?.monto_a_pagar,
+        'Caso B fundador concepto_equipo': fundadorB?.concepto_equipo,
+        'Caso B suma_cargos': casoB.suma_cargos,
+        'Caso B diferencia_redondeo': casoB.diferencia_redondeo,
+        'Caso B ajustes_redondeo': ajustesB.length,
+        'Caso C usuarios_activos': casoC.usuarios_activos,
+        'Caso C aporte_equipo_objetivo_por_persona': casoC.aporte_equipo_objetivo_por_persona,
+        'Caso C fundador saldo_compensatorio': fundadorC?.saldo_compensatorio,
+        'Caso C fundador compensacion_aplicada': fundadorC?.compensacion_aplicada,
+        'Caso C fundador monto_a_pagar': fundadorC?.monto_a_pagar,
+        'Caso C fundador ajuste_redondeo': fundadorC?.ajuste_redondeo,
+        'Caso C ingresante cargo_equipo': ingresanteC?.cargo_equipo,
+        'Caso C ingresante concepto_equipo': ingresanteC?.concepto_equipo,
+        'Caso C ingresante monto_a_pagar': ingresanteC?.monto_a_pagar,
+        'Caso C suma_cargos': casoC.suma_cargos,
+        'Caso C diferencia_redondeo': casoC.diferencia_redondeo,
+        'Caso C ajustes_redondeo': ajustesC.length,
+        'Caso C ajuste es centavos': ajustesC.length === 1 && Math.abs(ajustesC[0].ajuste_redondeo) <= 0.10,
+        'Caso C sin montos negativos': casoC.cargos.every((cargo) => cargo.monto_a_pagar >= 0),
+        casoA,
+        casoB,
+        casoC
+      };
+      const rows = expected.map(([label, expectedValue]) => ({
+        label,
+        actual: actual[label],
+        expected: expectedValue,
+        ok: isSameValue(actual[label], expectedValue)
+      }));
+      const failures = rows.filter((row) => !row.ok);
+
+      console.log('Resultado prueba manual calculos.js', actual);
+      if (failures.length > 0) {
+        console.error('PRUEBA FALLIDA', failures);
+      } else {
+        console.log('PRUEBA OK');
+      }
+
+      render(rows, actual);
+    } catch (error) {
+      statusNode.textContent = 'PRUEBA FALLIDA';
+      statusNode.className = 'status fail';
+      resultsNode.textContent = 'No se pudo ejecutar la prueba.';
+      rawNode.textContent = error?.stack || String(error);
+      console.error('PRUEBA FALLIDA', error);
+    }
+  </script>
+</body>
+</html>

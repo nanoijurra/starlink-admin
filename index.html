@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Starlink Admin ACC Cordoba</title>
+    <link rel="stylesheet" href="./css/styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Administracion compartida</p>
+        <h1>Starlink Admin ACC Cordoba</h1>
+      </div>
+      <div class="session-box" id="session-box" hidden>
+        <span id="session-label"></span>
+        <button type="button" id="logout-btn">Salir</button>
+      </div>
+    </header>
+
+    <p id="notice" class="notice" hidden></p>
+
+    <main>
+      <section id="login-section" class="panel narrow">
+        <h2>Login</h2>
+        <form id="login-form" class="stack">
+          <label>
+            Email
+            <input type="email" name="email" autocomplete="email" required>
+          </label>
+          <label>
+            Password
+            <input type="password" name="password" autocomplete="current-password" required>
+          </label>
+          <button type="submit" class="primary">Ingresar</button>
+        </form>
+        <p class="muted">El acceso esta limitado a usuarios con profile activo en Supabase.</p>
+      </section>
+
+      <section id="app-shell" hidden>
+        <nav class="tabs" aria-label="Secciones">
+          <button type="button" data-section="dashboard" class="active">Dashboard</button>
+          <button type="button" data-section="config">Configuracion</button>
+          <button type="button" data-section="personas">Personas</button>
+          <button type="button" data-section="pagos">Pagos</button>
+          <button type="button" data-section="calculo">Calculo mensual</button>
+          <button type="button" data-section="mensajes">Mensajes</button>
+          <button type="button" data-section="moras">Morosos / suspendidos</button>
+          <button type="button" data-section="exportacion">Exportacion</button>
+        </nav>
+
+        <section id="dashboard" class="view active">
+          <div class="section-title">
+            <h2>Dashboard</h2>
+            <label class="month-inline">Mes <input type="month" id="dashboard-mes"></label>
+          </div>
+          <div id="dashboard-cards" class="metric-grid"></div>
+        </section>
+
+        <section id="config" class="view">
+          <div class="section-title">
+            <h2>Configuracion</h2>
+            <p class="muted">Valores base del servicio y metodo de equilibrio.</p>
+          </div>
+          <form id="config-form" class="grid-form">
+            <label>Compra equipo <input type="number" name="compra_equipo" min="0" step="0.01" required></label>
+            <label>Recargo compra % <input type="number" name="recargo_compra_pct" min="0" step="0.01" required></label>
+            <label>Abono mensual <input type="number" name="abono_mensual" min="0" step="0.01" required></label>
+            <label>Recargo abono % <input type="number" name="recargo_abono_pct" min="0" step="0.01" required></label>
+            <label>Fundadores iniciales <input type="number" name="fundadores_iniciales" min="1" step="1" required></label>
+            <label>Meses mora suspension <input type="number" name="meses_mora_suspension" min="1" step="1" required></label>
+            <label>Alias bancario <input type="text" name="alias_bancario" placeholder="alias.para.transferencia"></label>
+            <label>Metodo equilibrio <input type="text" name="metodo_equilibrio" value="RAPIDO" readonly></label>
+            <button type="submit" class="primary admin-only">Guardar configuracion</button>
+          </form>
+        </section>
+
+        <section id="personas" class="view">
+          <div class="section-title">
+            <h2>Personas</h2>
+            <p class="muted">Staff, participacion, fundadores y MAC.</p>
+          </div>
+          <form id="persona-form" class="grid-form admin-only">
+            <input type="hidden" name="id">
+            <label>Nombre <input type="text" name="nombre" required></label>
+            <label>Dependencia <input type="text" name="dependencia"></label>
+            <label>Estado <select name="estado" id="persona-estado"></select></label>
+            <label>Fecha ingreso <input type="date" name="fecha_ingreso"></label>
+            <label>MAC <input type="text" name="mac"></label>
+            <label class="check"><input type="checkbox" name="es_fundador"> Es fundador</label>
+            <label class="wide">Observaciones <textarea name="observaciones" rows="2"></textarea></label>
+            <div class="form-actions">
+              <button type="submit" class="primary">Guardar persona</button>
+              <button type="button" id="persona-reset">Limpiar</button>
+            </div>
+          </form>
+          <div id="personas-table" class="table-wrap"></div>
+        </section>
+
+        <section id="pagos" class="view">
+          <div class="section-title">
+            <h2>Pagos</h2>
+            <p class="muted">Registro por persona, mes y concepto.</p>
+          </div>
+          <form id="pago-form" class="grid-form admin-only">
+            <label>Persona <select name="persona_id" id="pago-persona" required></select></label>
+            <label>Fecha pago <input type="date" name="fecha_pago" required></label>
+            <label>Monto <input type="number" name="monto" min="0" step="0.01" required></label>
+            <label>Concepto <select name="concepto" id="pago-concepto" required></select></label>
+            <label>Mes aplicado <input type="month" name="mes_aplicado" required></label>
+            <label>Medio <input type="text" name="medio" value="TRANSFERENCIA" required></label>
+            <label class="wide">Observaciones <textarea name="observaciones" rows="2"></textarea></label>
+            <button type="submit" class="primary">Registrar pago</button>
+          </form>
+          <div class="filters">
+            <label>Persona <select id="filtro-pago-persona"></select></label>
+            <label>Mes <input type="month" id="filtro-pago-mes"></label>
+            <label>Concepto <select id="filtro-pago-concepto"><option value="">Todos</option></select></label>
+            <button type="button" id="export-pagos-filtrados">Exportar CSV</button>
+          </div>
+          <div id="pagos-table" class="table-wrap"></div>
+        </section>
+
+        <section id="calculo" class="view">
+          <div class="section-title">
+            <h2>Calculo mensual</h2>
+            <p class="muted">Metodo rapido con regularizacion proporcional y saldo compensatorio.</p>
+          </div>
+          <div class="toolbar">
+            <label>Mes <input type="month" id="calculo-mes"></label>
+            <button type="button" id="calcular-btn" class="primary">Calcular cargos</button>
+          </div>
+          <div id="calculo-result" class="table-wrap"></div>
+        </section>
+
+        <section id="mensajes" class="view">
+          <div class="section-title">
+            <h2>Mensajes de cobro</h2>
+            <p class="muted">Mensajes individuales listos para copiar.</p>
+          </div>
+          <div class="toolbar">
+            <label>Mes <input type="month" id="mensajes-mes"></label>
+            <button type="button" id="generar-mensajes" class="primary">Generar mensajes</button>
+          </div>
+          <div id="mensajes-list" class="message-list"></div>
+        </section>
+
+        <section id="moras" class="view">
+          <div class="section-title">
+            <h2>Morosos / suspendidos</h2>
+            <p class="muted">Personas con cargos pendientes y referencia de suspension por mora.</p>
+          </div>
+          <div id="moras-table" class="table-wrap"></div>
+        </section>
+
+        <section id="exportacion" class="view">
+          <div class="section-title">
+            <h2>Exportacion</h2>
+            <p class="muted">Descarga de datos visibles en CSV.</p>
+          </div>
+          <div class="export-actions">
+            <button type="button" id="export-personas">Personas CSV</button>
+            <button type="button" id="export-pagos">Pagos CSV</button>
+            <button type="button" id="export-cargos">Cargos CSV</button>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script type="module" src="./js/app.js"></script>
+  </body>
+</html>

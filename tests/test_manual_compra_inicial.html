@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prueba manual - compra inicial</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 24px;
+      color: #1f2933;
+      background: #f7f9fb;
+    }
+
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 8px;
+    }
+
+    .status {
+      display: inline-block;
+      margin: 16px 0;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-weight: 700;
+      background: #e9eef5;
+    }
+
+    .status.ok {
+      color: #0f5132;
+      background: #d1e7dd;
+    }
+
+    .status.fail {
+      color: #842029;
+      background: #f8d7da;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+    }
+
+    th,
+    td {
+      padding: 10px;
+      border-bottom: 1px solid #d9e2ec;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #edf2f7;
+    }
+
+    .pass {
+      color: #0f5132;
+      font-weight: 700;
+    }
+
+    .fail {
+      color: #842029;
+      font-weight: 700;
+    }
+
+    pre {
+      overflow: auto;
+      padding: 12px;
+      background: #111827;
+      color: #f9fafb;
+      border-radius: 6px;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Prueba manual de compra inicial</h1>
+    <p>Validacion de calcularCompraInicial para fundadores y pagos COMPRA_INICIAL.</p>
+
+    <div id="status" class="status">Ejecutando prueba...</div>
+    <div id="results"></div>
+    <pre id="raw"></pre>
+  </main>
+
+  <script type="module">
+    const statusNode = document.getElementById('status');
+    const resultsNode = document.getElementById('results');
+    const rawNode = document.getElementById('raw');
+
+    const config = {
+      compra_equipo: 1077399,
+      recargo_compra_pct: 1.5,
+      fundadores_iniciales: 49
+    };
+
+    const personas = [
+      { id: 'fundador-1', nombre: 'Fundador 1', estado: 'ACTIVO', es_fundador: true },
+      { id: 'fundador-2', nombre: 'Fundador 2', estado: 'ACTIVO', es_fundador: true },
+      { id: 'fundador-3', nombre: 'Fundador 3', estado: 'ACTIVO', es_fundador: true },
+      { id: 'no-fundador-1', nombre: 'No fundador', estado: 'ACTIVO', es_fundador: false }
+    ];
+
+    const pagos = [
+      { persona_id: 'fundador-1', concepto: 'COMPRA_INICIAL', monto: 22317.55 },
+      { persona_id: 'fundador-2', concepto: 'COMPRA_INICIAL', monto: 10000 },
+      { persona_id: 'no-fundador-1', concepto: 'COMPRA_INICIAL', monto: 99999 }
+    ];
+
+    const expected = [
+      ['total_equipo_actualizado', 1093559.99],
+      ['fundadores_iniciales', 49],
+      ['aporte_por_fundador', 22317.55],
+      ['total_pagado_compra_inicial', 32317.55],
+      ['total_pendiente_compra_inicial', 34635.10],
+      ['detalle.length', 3],
+      ['no fundador no aparece', true],
+      ['Fundador 1 estado_pago', 'PAGADO'],
+      ['Fundador 1 saldo_pendiente', 0],
+      ['Fundador 2 estado_pago', 'PARCIAL'],
+      ['Fundador 2 saldo_pendiente', 12317.55],
+      ['Fundador 3 estado_pago', 'PENDIENTE'],
+      ['Fundador 3 saldo_pendiente', 22317.55]
+    ];
+
+    function isSameValue(actual, expectedValue) {
+      if (typeof expectedValue === 'number') {
+        return Math.abs(Number(actual) - expectedValue) < 0.001;
+      }
+      return actual === expectedValue;
+    }
+
+    function printable(value) {
+      return typeof value === 'string' ? value : JSON.stringify(value);
+    }
+
+    function render(rows, actual) {
+      const failures = rows.filter((row) => !row.ok);
+      statusNode.textContent = failures.length === 0 ? 'PRUEBA OK' : 'PRUEBA FALLIDA';
+      statusNode.className = `status ${failures.length === 0 ? 'ok' : 'fail'}`;
+      resultsNode.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>Valor</th>
+              <th>Obtenido</th>
+              <th>Esperado</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr>
+                <td>${row.label}</td>
+                <td>${printable(row.actual)}</td>
+                <td>${printable(row.expected)}</td>
+                <td class="${row.ok ? 'pass' : 'fail'}">${row.ok ? 'OK' : 'FALLA'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+      rawNode.textContent = failures.length === 0
+        ? JSON.stringify(actual, null, 2)
+        : `Fallos:\n${failures.map((failure) => failure.label).join('\n')}\n\n${JSON.stringify(actual, null, 2)}`;
+    }
+
+    try {
+      const { calcularCompraInicial } = await import('../js/calculos.js');
+      const resultado = calcularCompraInicial(config, personas, pagos);
+      const detallePorId = new Map(resultado.detalle.map((item) => [item.persona_id, item]));
+      const actual = {
+        total_equipo_actualizado: resultado.total_equipo_actualizado,
+        fundadores_iniciales: resultado.fundadores_iniciales,
+        aporte_por_fundador: resultado.aporte_por_fundador,
+        total_pagado_compra_inicial: resultado.total_pagado_compra_inicial,
+        total_pendiente_compra_inicial: resultado.total_pendiente_compra_inicial,
+        'detalle.length': resultado.detalle.length,
+        'no fundador no aparece': !detallePorId.has('no-fundador-1'),
+        'Fundador 1 estado_pago': detallePorId.get('fundador-1')?.estado_pago,
+        'Fundador 1 saldo_pendiente': detallePorId.get('fundador-1')?.saldo_pendiente,
+        'Fundador 2 estado_pago': detallePorId.get('fundador-2')?.estado_pago,
+        'Fundador 2 saldo_pendiente': detallePorId.get('fundador-2')?.saldo_pendiente,
+        'Fundador 3 estado_pago': detallePorId.get('fundador-3')?.estado_pago,
+        'Fundador 3 saldo_pendiente': detallePorId.get('fundador-3')?.saldo_pendiente,
+        detalle: resultado.detalle
+      };
+      const rows = expected.map(([label, expectedValue]) => ({
+        label,
+        actual: actual[label],
+        expected: expectedValue,
+        ok: isSameValue(actual[label], expectedValue)
+      }));
+      const failures = rows.filter((row) => !row.ok);
+
+      console.log('Resultado prueba manual compra inicial', resultado);
+      if (failures.length > 0) {
+        console.error('PRUEBA FALLIDA', failures);
+      } else {
+        console.log('PRUEBA OK');
+      }
+
+      render(rows, actual);
+    } catch (error) {
+      statusNode.textContent = 'PRUEBA FALLIDA';
+      statusNode.className = 'status fail';
+      resultsNode.textContent = 'No se pudo ejecutar la prueba.';
+      rawNode.textContent = error?.stack || String(error);
+      console.error('PRUEBA FALLIDA', error);
+    }
+  </script>
+</body>
+</html>
