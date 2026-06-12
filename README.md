@@ -90,6 +90,14 @@ Cada mes:
 9. Revisar Morosos / suspendidos para seguimiento de cargos pendientes.
 10. Exportar CSV desde Pagos o Exportacion.
 
+## WhatsApp
+
+La app no envia mensajes automaticamente. En la seccion Mensajes genera un enlace de WhatsApp con el texto precargado para cada persona que tenga telefono cargado y monto a pagar mayor que cero.
+
+El usuario debe revisar el mensaje y tocar Enviar dentro de WhatsApp.
+
+Los telefonos deben cargarse en formato internacional, sin simbolos. Ejemplo para Argentina Cordoba: `5493511234567`.
+
 ## Pruebas manuales
 
 Levantar un servidor local desde la carpeta del proyecto:

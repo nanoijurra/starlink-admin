@@ -349,6 +349,13 @@ th {
   margin-bottom: 10px;
 }
 
+.message-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: end;
+}
+
 .message-item pre {
   margin: 0;
   white-space: pre-wrap;

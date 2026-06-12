@@ -16,8 +16,9 @@ export function renderPersonasTable(personas, readonly = false) {
         <td>${escapeHtml(persona.dependencia || '')}</td>
         <td><span class="badge">${escapeHtml(persona.estado)}</span></td>
         <td>${persona.es_fundador ? 'Si' : 'No'}</td>
-        <td>${escapeHtml(persona.fecha_ingreso || '')}</td>
-        <td>${escapeHtml(persona.mac || '')}</td>
+        <td>${escapeHtml(persona.telefono_whatsapp || '')}</td>
+        <td>${escapeHtml(persona.mac_1 || persona.mac || '')}</td>
+        <td>${escapeHtml(persona.mac_2 || '')}</td>
         ${readonly ? '' : `
           <td class="actions">
             <button type="button" data-edit-persona="${escapeHtml(persona.id)}">Editar</button>
@@ -35,12 +36,13 @@ export function renderPersonasTable(personas, readonly = false) {
           <th>Dependencia</th>
           <th>Estado</th>
           <th>Fundador</th>
-          <th>Ingreso</th>
-          <th>MAC</th>
+          <th>Telefono WhatsApp</th>
+          <th>MAC 1</th>
+          <th>MAC 2</th>
           ${readonly ? '' : '<th>Acciones</th>'}
         </tr>
       </thead>
-      <tbody>${rows.join('') || `<tr><td colspan="${readonly ? '6' : '7'}">Sin personas cargadas.</td></tr>`}</tbody>
+      <tbody>${rows.join('') || `<tr><td colspan="${readonly ? '7' : '8'}">Sin personas cargadas.</td></tr>`}</tbody>
     </table>
   `;
 }

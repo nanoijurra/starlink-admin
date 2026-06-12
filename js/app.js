@@ -357,6 +357,12 @@ function renderMensajes() {
   byId('mensajes-list').innerHTML = '<p class="muted">Genera mensajes para el mes seleccionado.</p>';
 }
 
+function whatsappUrl(persona, mensaje) {
+  const telefono = String(persona?.telefono_whatsapp || '').replace(/\D/g, '');
+  if (!telefono || !mensaje) return '';
+  return `https://wa.me/${telefono}?text=${encodeURIComponent(mensaje)}`;
+}
+
 function renderMoras() {
   const moras = calcularMoras(
     state.personas,
@@ -372,7 +378,7 @@ function renderMoras() {
       <td class="number">${item.mesesImpagos}</td>
       <td class="number">${formatARS(item.deuda)}</td>
       <td>${item.sugerirSuspension ? 'Revisar suspension por mora' : 'Seguimiento'}</td>
-      <td>${escapeHtml(item.persona.mac || '')}</td>
+      <td>${escapeHtml(item.persona.mac_1 || item.persona.mac || '')}</td>
     </tr>
   `);
 
@@ -517,7 +523,10 @@ async function savePersona(event) {
     estado: raw.estado,
     es_fundador: form.elements.es_fundador.checked,
     fecha_ingreso: raw.fecha_ingreso || null,
-    mac: raw.mac?.trim() || null,
+    telefono_whatsapp: raw.telefono_whatsapp?.trim() || null,
+    mac: raw.mac_1?.trim() || null,
+    mac_1: raw.mac_1?.trim() || null,
+    mac_2: raw.mac_2?.trim() || null,
     observaciones: raw.observaciones?.trim() || null
   };
 
@@ -548,7 +557,9 @@ async function handlePersonaAction(event) {
     form.elements.dependencia.value = persona.dependencia || '';
     form.elements.estado.value = persona.estado || 'ACTIVO';
     form.elements.fecha_ingreso.value = persona.fecha_ingreso || '';
-    form.elements.mac.value = persona.mac || '';
+    form.elements.telefono_whatsapp.value = persona.telefono_whatsapp || '';
+    form.elements.mac_1.value = persona.mac_1 || persona.mac || '';
+    form.elements.mac_2.value = persona.mac_2 || '';
     form.elements.es_fundador.checked = Boolean(persona.es_fundador);
     form.elements.observaciones.value = persona.observaciones || '';
     setSection('personas');
@@ -798,11 +809,16 @@ function generarMensajes() {
     const cards = mensajes.map(({ persona, cargo }) => {
       const text = mensajePorCargo(persona, cargo, mes, state.config?.alias_bancario);
       if (!text) return '';
+      const montoAPagar = Number(cargo?.monto_a_pagar || 0);
+      const urlWhatsapp = montoAPagar > 0 ? whatsappUrl(persona, text) : '';
       return `
         <article class="message-item">
           <header>
             <strong>${escapeHtml(persona.nombre)}</strong>
-            <button type="button" data-copy-message="${escapeHtml(text)}">Copiar</button>
+            <div class="message-actions">
+              ${urlWhatsapp ? `<button type="button" data-open-whatsapp="${escapeHtml(urlWhatsapp)}">Abrir WhatsApp</button>` : ''}
+              <button type="button" data-copy-message="${escapeHtml(text)}">Copiar</button>
+            </div>
           </header>
           <pre>${escapeHtml(text)}</pre>
         </article>
@@ -815,6 +831,12 @@ function generarMensajes() {
 }
 
 async function copyMessage(event) {
+  const whatsapp = event.target.dataset.openWhatsapp;
+  if (whatsapp) {
+    window.open(whatsapp, '_blank', 'noopener,noreferrer');
+    return;
+  }
+
   const text = event.target.dataset.copyMessage;
   if (!text) return;
   try {
@@ -827,7 +849,7 @@ async function copyMessage(event) {
 
 function exportPersonas() {
   downloadCsv('personas.csv', [
-    ['id', 'nombre', 'dependencia', 'estado', 'es_fundador', 'fecha_ingreso', 'mac', 'observaciones'],
+    ['id', 'nombre', 'dependencia', 'estado', 'es_fundador', 'fecha_ingreso', 'telefono_whatsapp', 'mac_1', 'mac_2', 'mac', 'observaciones'],
     ...state.personas.map((persona) => [
       persona.id,
       persona.nombre,
@@ -835,6 +857,9 @@ function exportPersonas() {
       persona.estado,
       persona.es_fundador,
       persona.fecha_ingreso,
+      persona.telefono_whatsapp,
+      persona.mac_1,
+      persona.mac_2,
       persona.mac,
       persona.observaciones
     ])
