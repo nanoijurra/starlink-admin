@@ -1,7 +1,18 @@
-import { CONCEPTOS_PAGO, escapeHtml, formatARS, optionList, round2 } from './utils.js';
+import { CONCEPTOS_PAGO, escapeHtml, formatARS, round2 } from './utils.js';
 
-export function conceptoOptions(selected = '') {
-  return optionList(CONCEPTOS_PAGO, selected);
+const PAGO_COMPLETO_MES = 'PAGO_COMPLETO_MES';
+
+export function conceptoOptions(selected = '', options = {}) {
+  const conceptos = options.includePagoCompleto
+    ? [PAGO_COMPLETO_MES, ...CONCEPTOS_PAGO]
+    : CONCEPTOS_PAGO;
+
+  return conceptos
+    .map((concepto) => {
+      const label = concepto === PAGO_COMPLETO_MES ? 'Pago completo del mes' : concepto;
+      return `<option value="${escapeHtml(concepto)}" ${concepto === selected ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+    })
+    .join('');
 }
 
 export function descomponerPagoSegunCargo(montoPagado, cargo) {

@@ -314,6 +314,25 @@ th {
   white-space: nowrap;
 }
 
+.money-total {
+  color: var(--primary-dark);
+  font-weight: 800;
+}
+
+.money-positive {
+  color: var(--ok);
+  font-weight: 700;
+}
+
+.money-adjust {
+  color: var(--muted);
+}
+
+.money-muted {
+  color: var(--muted);
+  font-weight: 500;
+}
+
 .badge {
   display: inline-block;
   border: 1px solid var(--line);
@@ -323,6 +342,35 @@ th {
   color: var(--text);
   font-size: 0.78rem;
   font-weight: 750;
+}
+
+.status-pill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 0.78rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.status-pagado {
+  background: #d1e7dd;
+  color: #0f5132;
+}
+
+.status-pendiente {
+  background: #f8d7da;
+  color: #842029;
+}
+
+.status-parcial {
+  background: #fff3cd;
+  color: #664d03;
+}
+
+.status-no-aplica {
+  background: #e9eef5;
+  color: var(--muted);
 }
 
 .actions {

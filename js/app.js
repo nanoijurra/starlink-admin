@@ -285,9 +285,65 @@ function buscarCargoAsociado(personaId, mes) {
 
 function renderPagos() {
   const selectedConcepto = byId('filtro-pago-concepto').value;
-  byId('pago-concepto').innerHTML = conceptoOptions('ABONO');
+  byId('pago-concepto').innerHTML = conceptoOptions('PAGO_COMPLETO_MES', { includePagoCompleto: true });
   byId('filtro-pago-concepto').innerHTML = `<option value="" ${selectedConcepto ? '' : 'selected'}>Todos</option>${conceptoOptions(selectedConcepto)}`;
   byId('pagos-table').innerHTML = renderPagosTable(pagosFiltrados(), state.personas);
+}
+
+function pagosPersonaMes(personaId, mes, concepto) {
+  return round2(state.pagos
+    .filter((pago) => (
+      mismaPersona(pago.persona_id, personaId) &&
+      pago.mes_aplicado === mes &&
+      pago.concepto === concepto
+    ))
+    .reduce((total, pago) => total + Number(pago.monto || 0), 0));
+}
+
+function estadoPorPago(pagado, requerido, noAplica = false) {
+  if (noAplica) return 'No aplica';
+  if (requerido <= 0.009) return 'Pagado';
+  if (pagado <= 0.009) return 'Pendiente';
+  if (pagado + 0.01 < requerido) return 'Parcial';
+  return 'Pagado';
+}
+
+function estadoClass(estado) {
+  return estado
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function formatARSNegativoVisual(value) {
+  const amount = Math.abs(Number(value || 0));
+  return amount > 0 ? `-${formatARS(amount)}` : formatARS(0);
+}
+
+function observacionCargo(cargo) {
+  const partes = [];
+
+  if (cargo.concepto_equipo === 'COMPRA_INICIAL') {
+    partes.push('Compra inicial + abono mensual');
+  } else if (cargo.concepto_equipo === 'REGULARIZACION') {
+    partes.push('Regularizacion proporcional + abono mensual');
+  } else if (Number(cargo.compensacion_aplicada || 0) > 0) {
+    partes.push('Cuota reducida por saldo a favor');
+  } else {
+    partes.push('Cuota mensual');
+  }
+
+  if (Number(cargo.ajuste_redondeo || 0) !== 0 || String(cargo.concepto || '').includes('Ajuste de redondeo')) {
+    partes.push('Ajuste de redondeo aplicado');
+  }
+
+  const saldoProximoMes = round2(Math.max(0, Number(cargo.saldo_compensatorio || 0) - Number(cargo.compensacion_aplicada || 0)));
+  if (saldoProximoMes > 0) {
+    partes.push(`Saldo a favor proximo mes: ${formatARSNegativoVisual(saldoProximoMes)}`);
+  }
+
+  return partes.join('. ');
 }
 
 function renderCargosTable(resultado, readonly = false) {
@@ -295,19 +351,31 @@ function renderCargosTable(resultado, readonly = false) {
     return '<p class="muted">Calcula un mes para ver los cargos.</p>';
   }
 
-  const rows = resultado.cargos.map((cargo) => `
-    <tr>
-      <td>${escapeHtml(cargo.persona.nombre)}</td>
-      <td class="number">${formatARS(cargo.abono_base || 0)}</td>
-      <td class="number">${formatARS(cargo.cargo_equipo || 0)}</td>
-      <td><span class="badge">${escapeHtml(cargo.concepto_equipo || '-')}</span></td>
-      <td class="number">${formatARS(cargo.compensacion_aplicada || 0)}</td>
-      <td class="number"><strong>${formatARS(cargo.monto_a_pagar || 0)}</strong></td>
-      <td class="number">${formatARS(cargo.saldo_equipo_antes || 0)}</td>
-      <td class="number">${formatARS(cargo.saldo_equipo_despues || 0)}</td>
-      <td>${escapeHtml(cargo.concepto || '')}</td>
-    </tr>
-  `);
+  const rows = resultado.cargos.map((cargo) => {
+    const cargoEquipo = Number(cargo.cargo_equipo || 0);
+    const abonoNeto = round2(Math.max(0, Number(cargo.monto_a_pagar || 0) - cargoEquipo));
+    const conceptoEquipo = cargo.concepto_equipo;
+    const pagadoEquipo = conceptoEquipo ? pagosPersonaMes(cargo.persona_id, cargo.mes, conceptoEquipo) : 0;
+    const pagadoAbono = pagosPersonaMes(cargo.persona_id, cargo.mes, 'ABONO');
+    const estadoEquipo = estadoPorPago(pagadoEquipo, cargoEquipo, !conceptoEquipo && cargoEquipo <= 0);
+    const estadoAbono = estadoPorPago(pagadoAbono, abonoNeto);
+    const compensacion = Number(cargo.compensacion_aplicada || 0);
+    const ajuste = Number(cargo.ajuste_redondeo || 0);
+
+    return `
+      <tr>
+        <td>${escapeHtml(cargo.persona.nombre)}</td>
+        <td class="number ${cargoEquipo <= 0 ? 'money-muted' : ''}">${formatARS(cargoEquipo)}</td>
+        <td class="number ${Number(cargo.abono_base || 0) <= 0 ? 'money-muted' : ''}">${formatARS(cargo.abono_base || 0)}</td>
+        <td class="number money-positive ${compensacion <= 0 ? 'money-muted' : ''}">${formatARSNegativoVisual(compensacion)}</td>
+        <td class="number money-adjust ${ajuste === 0 ? 'money-muted' : ''}">${formatARS(ajuste)}</td>
+        <td class="number money-total">${formatARS(cargo.monto_a_pagar || 0)}</td>
+        <td><span class="status-pill status-${estadoClass(estadoEquipo)}">${escapeHtml(estadoEquipo)}</span></td>
+        <td><span class="status-pill status-${estadoClass(estadoAbono)}">${escapeHtml(estadoAbono)}</span></td>
+        <td>${escapeHtml(observacionCargo(cargo))}</td>
+      </tr>
+    `;
+  });
 
   return `
     <div class="summary-line">
@@ -321,14 +389,14 @@ function renderCargosTable(resultado, readonly = false) {
       <thead>
         <tr>
           <th>Persona</th>
-          <th>Abono base</th>
-          <th>Cargo equipo</th>
-          <th>Concepto equipo</th>
-          <th>Compensación</th>
+          <th>Equipo</th>
+          <th>Abono</th>
+          <th>Saldo a favor aplicado</th>
+          <th>Ajuste</th>
           <th>Total a pagar</th>
-          <th>Saldo equipo antes</th>
-          <th>Saldo equipo después</th>
-          <th>Concepto / observación</th>
+          <th>Estado equipo</th>
+          <th>Estado abono</th>
+          <th>Observación</th>
         </tr>
       </thead>
       <tbody>${rows.join('')}</tbody>
@@ -601,10 +669,15 @@ async function savePago(event) {
 
   try {
     const montoPagado = normalizeNumber(raw.monto);
-    const cargoAsociado = raw.concepto === 'ABONO'
+    const pagoCompletoMes = raw.concepto === 'PAGO_COMPLETO_MES';
+    const cargoAsociado = pagoCompletoMes
       ? buscarCargoAsociado(raw.persona_id, raw.mes_aplicado)
       : null;
-    const imputaciones = cargoAsociado
+    if (pagoCompletoMes && !cargoAsociado) {
+      throw new Error('Primero debe calcularse el mes o existir un cargo vigente para esta persona.');
+    }
+
+    const imputaciones = pagoCompletoMes
       ? descomponerPagoSegunCargo(montoPagado, cargoAsociado)
       : [{ concepto: raw.concepto, monto: montoPagado }];
     const payload = imputaciones.map((imputacion) => ({
