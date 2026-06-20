@@ -638,6 +638,21 @@ async function savePersona(event) {
   }
 }
 
+function focusPersonaForm() {
+  const form = byId('persona-form');
+  if (form) {
+    form.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start'
+    });
+  }
+
+  const nombreInput = byId('persona-nombre');
+  if (nombreInput) {
+    setTimeout(() => nombreInput.focus(), 300);
+  }
+}
+
 async function handlePersonaAction(event) {
   const editId = event.target.dataset.editPersona;
   const deleteId = event.target.dataset.deletePersona;
@@ -657,6 +672,7 @@ async function handlePersonaAction(event) {
     form.elements.es_fundador.checked = Boolean(persona.es_fundador);
     form.elements.observaciones.value = persona.observaciones || '';
     setSection('personas');
+    focusPersonaForm();
   }
 
   if (deleteId && isAdmin()) {
