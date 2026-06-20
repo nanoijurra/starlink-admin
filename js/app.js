@@ -300,12 +300,37 @@ function pagosPersonaMes(personaId, mes, concepto) {
     .reduce((total, pago) => total + Number(pago.monto || 0), 0));
 }
 
+function pagosEquipoPersona(personaId) {
+  return round2(state.pagos
+    .filter((pago) => (
+      mismaPersona(pago.persona_id, personaId) &&
+      ['COMPRA_INICIAL', 'REGULARIZACION'].includes(pago.concepto)
+    ))
+    .reduce((total, pago) => total + Number(pago.monto || 0), 0));
+}
+
 function estadoPorPago(pagado, requerido, noAplica = false) {
   if (noAplica) return 'No aplica';
   if (requerido <= 0.009) return 'Pagado';
   if (pagado <= 0.009) return 'Pendiente';
   if (pagado + 0.01 < requerido) return 'Parcial';
   return 'Pagado';
+}
+
+function estadoEquipoCargo(cargo, pagadoEquipo) {
+  const cargoEquipo = Number(cargo.cargo_equipo || 0);
+  if (cargoEquipo > 0) return estadoPorPago(pagadoEquipo, cargoEquipo);
+
+  const tieneSaldoAFavor = Number(cargo.compensacion_aplicada || 0) > 0 ||
+    Number(cargo.saldo_compensatorio || 0) > 0;
+  const personaParticipa = cargo.persona?.estado === 'ACTIVO';
+  const equipoHistorico = pagosEquipoPersona(cargo.persona_id);
+
+  if (personaParticipa && (cargo.persona?.es_fundador || tieneSaldoAFavor || equipoHistorico > 0)) {
+    return 'Pagado';
+  }
+
+  return 'No aplica';
 }
 
 function estadoClass(estado) {
@@ -357,7 +382,7 @@ function renderCargosTable(resultado, readonly = false) {
     const conceptoEquipo = cargo.concepto_equipo;
     const pagadoEquipo = conceptoEquipo ? pagosPersonaMes(cargo.persona_id, cargo.mes, conceptoEquipo) : 0;
     const pagadoAbono = pagosPersonaMes(cargo.persona_id, cargo.mes, 'ABONO');
-    const estadoEquipo = estadoPorPago(pagadoEquipo, cargoEquipo, !conceptoEquipo && cargoEquipo <= 0);
+    const estadoEquipo = estadoEquipoCargo(cargo, pagadoEquipo);
     const estadoAbono = estadoPorPago(pagadoAbono, abonoNeto);
     const compensacion = Number(cargo.compensacion_aplicada || 0);
     const ajuste = Number(cargo.ajuste_redondeo || 0);
