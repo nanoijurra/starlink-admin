@@ -300,15 +300,6 @@ function pagosPersonaMes(personaId, mes, concepto) {
     .reduce((total, pago) => total + Number(pago.monto || 0), 0));
 }
 
-function pagosEquipoPersona(personaId) {
-  return round2(state.pagos
-    .filter((pago) => (
-      mismaPersona(pago.persona_id, personaId) &&
-      ['COMPRA_INICIAL', 'REGULARIZACION'].includes(pago.concepto)
-    ))
-    .reduce((total, pago) => total + Number(pago.monto || 0), 0));
-}
-
 function estadoPorPago(pagado, requerido, noAplica = false) {
   if (noAplica) return 'No aplica';
   if (requerido <= 0.009) return 'Pagado';
@@ -321,12 +312,22 @@ function estadoEquipoCargo(cargo, pagadoEquipo) {
   const cargoEquipo = Number(cargo.cargo_equipo || 0);
   if (cargoEquipo > 0) return estadoPorPago(pagadoEquipo, cargoEquipo);
 
+  const persona = state.personas.find((item) => mismaPersona(item.id, cargo.persona_id)) || cargo.persona;
+  const pagosEquipo = state.pagos.filter((pago) => (
+    mismaPersona(pago.persona_id, cargo.persona_id) &&
+    ['COMPRA_INICIAL', 'REGULARIZACION'].includes(pago.concepto)
+  ));
+  const totalPagadoEquipo = round2(pagosEquipo.reduce((total, pago) => total + Number(pago.monto || 0), 0));
   const tieneSaldoAFavor = Number(cargo.compensacion_aplicada || 0) > 0 ||
-    Number(cargo.saldo_compensatorio || 0) > 0;
-  const personaParticipa = cargo.persona?.estado === 'ACTIVO';
-  const equipoHistorico = pagosEquipoPersona(cargo.persona_id);
+    Number(cargo.saldo_compensatorio || 0) > 0 ||
+    Number(cargo.saldo_favor_proximo_mes || 0) > 0 ||
+    observacionCargo(cargo).toLowerCase().includes('saldo a favor');
+  const personaActiva = persona?.estado === 'ACTIVO';
+  const esFundador = persona?.es_fundador === true;
 
-  if (personaParticipa && (cargo.persona?.es_fundador || tieneSaldoAFavor || equipoHistorico > 0)) {
+  if (personaActiva && esFundador) return 'Pagado';
+
+  if (personaActiva && (tieneSaldoAFavor || totalPagadoEquipo > 0)) {
     return 'Pagado';
   }
 
