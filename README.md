@@ -1,131 +1,167 @@
-# Starlink Admin ACC Cordoba
+# Starlink Admin ACC Córdoba
 
-App web estatica para administrar el pago compartido de un servicio Starlink en un ambito laboral. Usa HTML, CSS y JavaScript vanilla, con Supabase como base de datos online y autenticacion.
+App web simple para administrar pagos compartidos del servicio Starlink, personas, pagos, mensajes de cobro, MACs y gestión manual del router.
 
-## Alcance
+Usa HTML, CSS y JavaScript vanilla con Supabase como base de datos online y autenticación. No usa backend propio, React, Vite ni Node obligatorio para operar.
 
-- Acceso solo para administradores y usuarios de lectura creados en Supabase Auth.
-- Roles:
-  - `ADMIN`: puede leer, crear, editar y borrar.
-  - `LECTURA`: puede ver y exportar, pero no modificar.
-- No hay acceso individual para usuarios comunes.
-- No usa React, Vite, backend propio ni Node obligatorio.
-- No se guarda ninguna `service_role key` en el frontend.
+## Alcance v1
 
-## Instalacion
+La versión funcional actual incluye:
 
-1. Crear un proyecto en Supabase.
-2. En el SQL editor de Supabase, ejecutar en orden:
-   - `sql/001_schema.sql`
-   - `sql/002_rls.sql`
-   - `sql/003_seed_config.sql`
-3. Crear usuarios administradores desde Supabase Auth.
-4. Insertar los profiles correspondientes desde el SQL editor. Ejemplo:
+- Gestión de personas.
+- Fundadores y usuarios posteriores.
+- Cálculo mensual.
+- Compra inicial del equipo.
+- Abono mensual.
+- Regularización proporcional.
+- Saldo a favor / compensación.
+- Registro de pagos.
+- Mensajes de cobro.
+- Alias bancario.
+- WhatsApp manual asistido.
+- MAC 1 / MAC 2.
+- Gestión manual del router/MAC.
+- Roles `ADMIN` y `LECTURA`.
 
-```sql
-insert into public.profiles (id, email, rol, activo)
-values (
-  'UUID_DEL_USUARIO_AUTH',
-  'admin@ejemplo.com',
-  'ADMIN',
-  true
-);
-```
+Aclaraciones importantes:
 
-Para un usuario de solo lectura:
+- La app no envía WhatsApp automáticamente.
+- La app no configura el router automáticamente.
+- La app no maneja dinero real: solo registra pagos informados.
+- La app no usa backend propio: usa Supabase.
 
-```sql
-insert into public.profiles (id, email, rol, activo)
-values (
-  'UUID_DEL_USUARIO_AUTH',
-  'lectura@ejemplo.com',
-  'LECTURA',
-  true
-);
-```
+## Estructura del proyecto
 
-5. Copiar `js/supabaseClient.example.js` como `js/supabaseClient.js`.
-6. Completar `SUPABASE_URL` y `SUPABASE_ANON_KEY` con la URL del proyecto y la publishable/anon key publica de Supabase.
-7. Abrir `index.html` localmente o publicar la carpeta `starlink-admin/` en GitHub Pages.
+- `index.html`: estructura principal de la app y pantallas.
+- `css/`: estilos visuales.
+- `js/`: lógica de UI, cálculos, pagos, mensajes, autenticación y conexión Supabase.
+- `sql/`: schema, RLS, seed y migraciones.
+- `tests/`: pruebas manuales ejecutables desde navegador.
 
-## Configuracion inicial
+## Configuración Supabase
 
-El seed carga:
+La app usa Supabase Auth para iniciar sesión y tablas públicas protegidas por RLS.
 
-- Compra inicial del equipo: `1.077.399 ARS`.
-- Recargo de tarjeta sobre compra: `1,5%`.
-- Abono mensual inicial: `65.000 ARS`.
-- Recargo de tarjeta sobre abono mensual: `1,5%`.
-- Fundadores iniciales confirmados: `49`.
-- Mora para suspension: `3 meses`.
-- Metodo de equilibrio: `RAPIDO`.
+Tablas principales:
 
-Estos valores pueden editarse desde la seccion Configuracion con un usuario `ADMIN`.
+- `profiles`: perfil interno del usuario autenticado, rol y estado activo.
+- `personas`: participantes, estado, fundador, contacto, MACs y estado manual del router.
+- `pagos`: pagos informados por persona, mes y concepto.
+- `cierres_mensuales`: cierres mensuales.
+- `cargos_mensuales`: cargos calculados y persistidos por mes.
+- `app_config`: configuración operativa.
+- `audit_log`: auditoría.
 
-## Metodo rapido
+RLS está activo. Los usuarios deben estar autenticados y tener profile activo.
 
-La logica esta separada en `js/calculos.js`.
+Roles:
 
-Cada mes:
+- `ADMIN`: puede operar y modificar datos según las políticas RLS.
+- `LECTURA`: puede consultar, pero no debería modificar datos.
 
-- Se consideran usuarios activos con estado `ACTIVO`.
-- Los suspendidos por mora no dividen el abono mensual, pero mantienen deuda registrada.
-- Los fundadores tienen un aporte inicial teorico de compra equivalente al total actualizado dividido por 49.
-- Los ingresantes posteriores regularizan solo su parte proporcional de la compra inicial.
-- La regularizacion proporcional se aplica al pago del abono mensual.
-- Los fundadores con saldo compensatorio pagan reducido o cero mientras haya compensacion aplicable.
-- No se muestra como dinero a devolver: solo como saldo compensatorio.
-- Cuando no hay deuda de regularizacion ni saldo compensatorio, todos los activos pagan la misma cuota mensual.
+Nunca usar `service_role` en el frontend. `js/supabaseClient.js` debe usar solo la URL del proyecto y la publishable/anon key pública.
 
-## Uso operativo
+## Migraciones SQL
 
-1. Iniciar sesion con un usuario creado en Supabase Auth y con profile activo.
-2. Cargar o revisar la configuracion.
-3. Cargar personas, estado, dependencia, fundador, MAC y observaciones.
-4. Registrar pagos por persona, mes y concepto.
-5. En Calculo mensual, elegir un mes y calcular cargos.
-6. Revisar total del abono, suma de cargos y diferencia por redondeo.
-7. Cerrar el mes para guardar cargos mensuales.
-8. Generar mensajes de cobro y copiarlos.
-9. Revisar Morosos / suspendidos para seguimiento de cargos pendientes.
-10. Exportar CSV desde Pagos o Exportacion.
+Ejecutar en Supabase SQL Editor en este orden:
 
-## WhatsApp
+1. `sql/001_schema.sql`
+2. `sql/002_rls.sql`
+3. `sql/003_seed_config.sql`
+4. `sql/004_migracion_alias_bancario.sql`
+5. `sql/004_migracion_componentes_cargos.sql`
+6. `sql/005_migracion_contacto_mac.sql`
+7. `sql/006_migracion_estado_router.sql`
 
-La app no envia mensajes automaticamente. En la seccion Mensajes genera un enlace de WhatsApp con el texto precargado para cada persona que tenga telefono cargado y monto a pagar mayor que cero.
+Nota: hay dos migraciones con numeración `004`. Es una numeración repetida; no impide ejecutar la base si se corren ambas antes de `005` y `006`.
 
-El usuario debe revisar el mensaje y tocar Enviar dentro de WhatsApp.
+## Uso local
 
-Los telefonos deben cargarse en formato internacional, sin simbolos. Ejemplo para Argentina Cordoba: `5493511234567`.
+Desde una terminal:
 
-## Gestion router / MAC
-
-La seccion Gestion router / MAC compara el cargo vigente del mes, los pagos registrados y el estado manual del router.
-
-La app no configura el router automaticamente. Solo prioriza acciones para que el administrador marque manualmente personas como `HABILITADO` o `BLOQUEADO`.
-
-Prioridades:
-
-- Pago completo, router bloqueado y MAC cargada: habilitar.
-- Sin pago completo, router habilitado y MAC cargada: revisar bloqueo.
-- Pago completo sin MAC cargada: solicitar MAC.
-- Pago completo, router habilitado y MAC cargada: correcto.
-- Sin pago completo y router bloqueado: sin accion.
-
-Para usar esta seccion en Supabase, ejecutar la migracion `sql/006_migracion_estado_router.sql`.
-
-## Pruebas manuales
-
-Levantar un servidor local desde la carpeta del proyecto:
-
-```bash
+```cmd
+cd C:\PROYECTO\starlink-admin
 py -m http.server 8000
 ```
 
-Si no funciona:
+Si `py` no funciona:
 
-```bash
+```cmd
 python -m http.server 8000
+```
+
+Abrir:
+
+```text
+http://localhost:8000
+```
+
+## Publicación GitHub Pages
+
+- Subir los cambios con git.
+- Configurar GitHub Pages para publicar desde `main` y la carpeta raíz del repositorio.
+- Abrir la URL pública de GitHub Pages.
+- Si no se ven cambios, hacer `Ctrl+F5` para forzar recarga del navegador.
+
+## Flujo operativo mensual
+
+1. Revisar personas activas.
+2. Calcular el mes.
+3. Revisar total a pagar y componentes del cargo.
+4. Generar mensajes de cobro.
+5. Enviar WhatsApp manualmente desde el enlace precargado.
+6. Registrar pagos informados.
+7. Revisar Gestión router / MAC.
+8. Marcar `HABILITADO` o `BLOQUEADO` según la acción real hecha en el router.
+
+## Pagos
+
+Conceptos reales guardados:
+
+- `COMPRA_INICIAL`
+- `ABONO`
+- `REGULARIZACION`
+- `AJUSTE`
+
+La opción `Pago completo del mes` es solo visual para facilitar la carga. No se guarda como concepto real: se descompone en los conceptos reales que correspondan según el cargo mensual.
+
+## Gestión router / MAC
+
+`router_estado` es manual y representa lo que el administrador registró sobre el estado real en el router.
+
+Opciones:
+
+- `HABILITADO`
+- `BLOQUEADO`
+
+Prioridad de revisión:
+
+1. Pagó y está bloqueado.
+2. No pagó y está habilitado.
+3. Pagó pero falta MAC.
+4. Pagó y está habilitado.
+5. No pagó y ya está bloqueado.
+
+La app no toca el router automáticamente. Solo ayuda a priorizar acciones y registrar el estado manual.
+
+## WhatsApp
+
+La app usa enlaces `wa.me` para abrir WhatsApp con el mensaje de cobro precargado.
+
+El usuario debe revisar el texto y tocar Enviar dentro de WhatsApp. No se envía automáticamente.
+
+Los teléfonos deben cargarse en formato internacional, sin símbolos. Ejemplo para Argentina Córdoba:
+
+```text
+5493511234567
+```
+
+## Pruebas manuales
+
+Levantar servidor local desde la carpeta del proyecto:
+
+```cmd
+py -m http.server 8000
 ```
 
 Abrir:
@@ -136,8 +172,8 @@ http://localhost:8000/tests/test_manual_calculos.html
 
 Resultado esperado:
 
-* Debe mostrar `PRUEBA OK`.
-* Valida método rápido, redondeo y suma de cargos.
+- Debe mostrar `PRUEBA OK`.
+- Valida método rápido, redondeo y suma de cargos.
 
 Abrir:
 
@@ -147,27 +183,27 @@ http://localhost:8000/tests/test_manual_pagos.html
 
 Resultado esperado:
 
-* Debe mostrar `PRUEBA OK`.
-* Valida pago mixto, pago parcial, cargo sin regularización y rechazo de pago excedente.
+- Debe mostrar `PRUEBA OK`.
+- Valida pago mixto, pago parcial, cargo sin regularización y rechazo de pago excedente.
 
 Estas pruebas deben ejecutarse después de modificar `js/calculos.js`, `js/pagos.js`, `js/utils.js` o la lógica de cierre/pagos en `js/app.js`.
 
 ## Seguridad
 
-- RLS esta activado en todas las tablas.
-- Usuarios anonimos no tienen politicas de lectura.
-- Solo usuarios autenticados con profile activo pueden acceder.
-- `LECTURA` solo puede seleccionar.
-- `ADMIN` puede modificar datos.
-- El frontend usa solo la publishable/anon key. La `service_role key` nunca debe copiarse en `js/supabaseClient.js`.
+- No subir ni copiar `service_role` al frontend.
+- El frontend debe usar solo publishable/anon key.
+- La seguridad de datos se apoya en RLS.
+- Usuarios anónimos no deben tener acceso.
+- Usuarios con rol `LECTURA` no deberían modificar datos.
+- Para desactivar usuarios o personas se usan estados o campos de estado, no borrado físico operativo.
 
-## Archivos principales
+## Estado v1 funcional
 
-- `index.html`: estructura de la app.
-- `css/styles.css`: estilos.
-- `js/app.js`: orquestacion de UI y Supabase.
-- `js/calculos.js`: funciones puras de calculo.
-- `js/mensajes.js`: mensajes copiables.
-- `sql/001_schema.sql`: tablas, checks, indices y auditoria.
-- `sql/002_rls.sql`: funciones de rol y politicas RLS.
-- `sql/003_seed_config.sql`: configuracion inicial.
+v1 funcional validada:
+
+- Cálculo mensual validado.
+- Pagos validados.
+- Mensajes validados.
+- WhatsApp manual asistido validado.
+- Gestión router/MAC validada.
+- Publicación online validada.
