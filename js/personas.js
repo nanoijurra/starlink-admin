@@ -19,6 +19,7 @@ export function renderPersonasTable(personas, readonly = false) {
         <td>${escapeHtml(persona.telefono_whatsapp || '')}</td>
         <td>${escapeHtml(persona.mac_1 || persona.mac || '')}</td>
         <td>${escapeHtml(persona.mac_2 || '')}</td>
+        <td><span class="badge">${escapeHtml(persona.router_estado || 'BLOQUEADO')}</span></td>
         ${readonly ? '' : `
           <td class="actions">
             <button type="button" data-edit-persona="${escapeHtml(persona.id)}">Editar</button>
@@ -39,10 +40,11 @@ export function renderPersonasTable(personas, readonly = false) {
           <th>Telefono WhatsApp</th>
           <th>MAC 1</th>
           <th>MAC 2</th>
+          <th>Router</th>
           ${readonly ? '' : '<th>Acciones</th>'}
         </tr>
       </thead>
-      <tbody>${rows.join('') || `<tr><td colspan="${readonly ? '7' : '8'}">Sin personas cargadas.</td></tr>`}</tbody>
+      <tbody>${rows.join('') || `<tr><td colspan="${readonly ? '8' : '9'}">Sin personas cargadas.</td></tr>`}</tbody>
     </table>
   `;
 }

@@ -149,6 +149,7 @@ function renderAll() {
   renderPagos();
   renderCalculo();
   renderMensajes();
+  renderRouter();
   renderMoras();
 }
 
@@ -451,6 +452,139 @@ function renderMensajes() {
   byId('mensajes-list').innerHTML = '<p class="muted">Genera mensajes para el mes seleccionado.</p>';
 }
 
+function macsPersona(persona) {
+  return [persona?.mac_1 || persona?.mac || '', persona?.mac_2 || '']
+    .map((mac) => String(mac || '').trim())
+    .filter(Boolean);
+}
+
+function totalPagadoCargoMes(personaId, mes) {
+  const conceptos = ['COMPRA_INICIAL', 'REGULARIZACION', 'ABONO', 'AJUSTE'];
+  return round2(state.pagos
+    .filter((pago) => (
+      mismaPersona(pago.persona_id, personaId) &&
+      pago.mes_aplicado === mes &&
+      conceptos.includes(pago.concepto)
+    ))
+    .reduce((total, pago) => total + Number(pago.monto || 0), 0));
+}
+
+function routerMonth() {
+  return byId('router-mes')?.value || byId('calculo-mes')?.value || byId('mensajes-mes')?.value || currentMonth();
+}
+
+function routerItem(persona, mes) {
+  const cargo = buscarCargoAsociado(persona.id, mes);
+  const totalPagado = totalPagadoCargoMes(persona.id, mes);
+  const montoAPagar = cargo ? round2(Number(cargo.monto_a_pagar || 0)) : 0;
+  const pagoCompleto = Boolean(cargo) && (montoAPagar <= 0.009 || totalPagado + 0.01 >= montoAPagar);
+  const routerEstado = persona.router_estado || 'BLOQUEADO';
+  const macs = macsPersona(persona);
+  const tieneMac = macs.length > 0;
+
+  let prioridad = 5;
+  let titulo = 'Sin pago completo y bloqueado';
+  let descripcion = cargo ? 'Sin accion de router pendiente.' : 'Sin cargo vigente para el mes seleccionado.';
+
+  if (pagoCompleto && !tieneMac) {
+    prioridad = 3;
+    titulo = 'PAGO Y FALTA MAC';
+    descripcion = 'Pedir MAC antes de habilitar.';
+  } else if (pagoCompleto && routerEstado === 'BLOQUEADO' && tieneMac) {
+    prioridad = 1;
+    titulo = 'PAGO Y ESTA BLOQUEADO';
+    descripcion = 'Corresponde habilitar en el router.';
+  } else if (!pagoCompleto && routerEstado === 'HABILITADO' && tieneMac) {
+    prioridad = 2;
+    titulo = 'NO PAGO Y ESTA HABILITADO';
+    descripcion = 'Revisar y bloquear si corresponde.';
+  } else if (pagoCompleto && routerEstado === 'HABILITADO' && tieneMac) {
+    prioridad = 4;
+    titulo = 'Correcto';
+    descripcion = 'Pago completo, MAC cargada y router habilitado.';
+  }
+
+  return {
+    persona,
+    cargo,
+    mes,
+    totalPagado,
+    montoAPagar,
+    pagoCompleto,
+    routerEstado,
+    macs,
+    tieneMac,
+    prioridad,
+    titulo,
+    descripcion
+  };
+}
+
+function renderRouterActions(item) {
+  const id = escapeHtml(item.persona.id);
+  const macButtons = item.macs
+    .map((mac, index) => `<button type="button" data-copy-mac="${escapeHtml(mac)}">Copiar MAC ${index + 1}</button>`)
+    .join('');
+  const adminActions = isAdmin() ? [
+    item.prioridad === 1 ? `<button type="button" class="primary" data-router-persona="${id}" data-router-estado="HABILITADO">Marcar habilitado</button>` : '',
+    item.prioridad === 2 ? `<button type="button" class="danger" data-router-persona="${id}" data-router-estado="BLOQUEADO">Marcar bloqueado</button>` : '',
+    item.prioridad === 3 ? `<button type="button" data-solicitar-mac="${id}">Solicitar MAC</button>` : '',
+    item.prioridad === 3 ? `<button type="button" data-edit-router-persona="${id}">Editar persona</button>` : ''
+  ].join('') : '';
+
+  return [adminActions, macButtons].filter(Boolean).join(' ');
+}
+
+function renderRouter() {
+  const mes = routerMonth();
+  if (!mes) {
+    byId('router-list').innerHTML = '<p class="muted">Seleccione o calcule un mes para gestionar el router.</p>';
+    return;
+  }
+
+  const items = state.personas
+    .filter((persona) => persona.estado === 'ACTIVO')
+    .map((persona) => routerItem(persona, mes))
+    .sort((a, b) => a.prioridad - b.prioridad || a.persona.nombre.localeCompare(b.persona.nombre));
+
+  const resumen = {
+    habilitar: items.filter((item) => item.prioridad === 1).length,
+    bloquear: items.filter((item) => item.prioridad === 2).length,
+    faltaMac: items.filter((item) => item.prioridad === 3).length,
+    correctos: items.filter((item) => [4, 5].includes(item.prioridad)).length
+  };
+
+  const cards = items.map((item) => `
+    <article class="router-card router-priority-${item.prioridad}">
+      <header>
+        <div>
+          <strong>${escapeHtml(item.persona.nombre)}</strong>
+          <span>${escapeHtml(item.titulo)}</span>
+        </div>
+        <span class="badge">${escapeHtml(item.routerEstado)}</span>
+      </header>
+      <div class="router-grid">
+        <span>Mes <strong>${escapeHtml(item.mes)}</strong></span>
+        <span>Total cargo <strong>${item.cargo ? formatARS(item.montoAPagar) : 'Sin cargo'}</strong></span>
+        <span>Pagado <strong>${formatARS(item.totalPagado)}</strong></span>
+        <span>MAC <strong>${escapeHtml(item.macs.join(' / ') || 'Falta MAC')}</strong></span>
+      </div>
+      <p class="muted">${escapeHtml(item.descripcion)}</p>
+      <div class="router-actions">${renderRouterActions(item)}</div>
+    </article>
+  `);
+
+  byId('router-list').innerHTML = `
+    <div class="router-summary">
+      <article><span>Para habilitar</span><strong>${resumen.habilitar}</strong></article>
+      <article><span>Para bloquear</span><strong>${resumen.bloquear}</strong></article>
+      <article><span>Falta MAC</span><strong>${resumen.faltaMac}</strong></article>
+      <article><span>Correctos / sin accion</span><strong>${resumen.correctos}</strong></article>
+    </div>
+    <div class="router-list">${cards.join('') || '<p class="muted">No hay personas activas para gestionar.</p>'}</div>
+  `;
+}
+
 function whatsappUrl(persona, mensaje) {
   const telefono = String(persona?.telefono_whatsapp || '').replace(/\D/g, '');
   if (!telefono || !mensaje) return '';
@@ -505,6 +639,7 @@ async function boot() {
   byId('dashboard-mes').value = currentMonth();
   byId('calculo-mes').value = currentMonth();
   byId('mensajes-mes').value = currentMonth();
+  byId('router-mes').value = currentMonth();
   byId('filtro-pago-mes').value = currentMonth();
   byId('pago-form').elements.fecha_pago.value = new Date().toISOString().slice(0, 10);
   byId('pago-form').elements.mes_aplicado.value = currentMonth();
@@ -550,6 +685,7 @@ function bindEvents() {
   });
 
   byId('dashboard-mes').addEventListener('change', renderDashboard);
+  byId('router-mes').addEventListener('change', renderRouter);
   byId('filtro-pago-persona').addEventListener('change', renderPagos);
   byId('filtro-pago-mes').addEventListener('change', renderPagos);
   byId('filtro-pago-concepto').addEventListener('change', renderPagos);
@@ -563,6 +699,7 @@ function bindEvents() {
   byId('calculo-result').addEventListener('click', closeMonth);
   byId('generar-mensajes').addEventListener('click', generarMensajes);
   byId('mensajes-list').addEventListener('click', copyMessage);
+  byId('router-list').addEventListener('click', handleRouterAction);
   byId('export-pagos-filtrados').addEventListener('click', () => exportPagos(pagosFiltrados(), 'pagos-filtrados.csv'));
   byId('export-personas').addEventListener('click', exportPersonas);
   byId('export-pagos').addEventListener('click', () => exportPagos(state.pagos, 'pagos.csv'));
@@ -603,6 +740,7 @@ function resetPersonaForm() {
   form.reset();
   form.elements.id.value = '';
   form.elements.estado.value = 'ACTIVO';
+  form.elements.router_estado.value = 'BLOQUEADO';
 }
 
 async function savePersona(event) {
@@ -621,6 +759,7 @@ async function savePersona(event) {
     mac: raw.mac_1?.trim() || null,
     mac_1: raw.mac_1?.trim() || null,
     mac_2: raw.mac_2?.trim() || null,
+    router_estado: raw.router_estado || 'BLOQUEADO',
     observaciones: raw.observaciones?.trim() || null
   };
 
@@ -653,26 +792,31 @@ function focusPersonaForm() {
   }
 }
 
+function editPersona(personaId) {
+  const persona = state.personas.find((item) => mismaPersona(item.id, personaId));
+  if (!persona) return;
+  const form = byId('persona-form');
+  form.elements.id.value = persona.id;
+  form.elements.nombre.value = persona.nombre || '';
+  form.elements.dependencia.value = persona.dependencia || '';
+  form.elements.estado.value = persona.estado || 'ACTIVO';
+  form.elements.fecha_ingreso.value = persona.fecha_ingreso || '';
+  form.elements.telefono_whatsapp.value = persona.telefono_whatsapp || '';
+  form.elements.mac_1.value = persona.mac_1 || persona.mac || '';
+  form.elements.mac_2.value = persona.mac_2 || '';
+  form.elements.router_estado.value = persona.router_estado || 'BLOQUEADO';
+  form.elements.es_fundador.checked = Boolean(persona.es_fundador);
+  form.elements.observaciones.value = persona.observaciones || '';
+  setSection('personas');
+  focusPersonaForm();
+}
+
 async function handlePersonaAction(event) {
   const editId = event.target.dataset.editPersona;
   const deleteId = event.target.dataset.deletePersona;
 
   if (editId) {
-    const persona = state.personas.find((item) => item.id === editId);
-    if (!persona) return;
-    const form = byId('persona-form');
-    form.elements.id.value = persona.id;
-    form.elements.nombre.value = persona.nombre || '';
-    form.elements.dependencia.value = persona.dependencia || '';
-    form.elements.estado.value = persona.estado || 'ACTIVO';
-    form.elements.fecha_ingreso.value = persona.fecha_ingreso || '';
-    form.elements.telefono_whatsapp.value = persona.telefono_whatsapp || '';
-    form.elements.mac_1.value = persona.mac_1 || persona.mac || '';
-    form.elements.mac_2.value = persona.mac_2 || '';
-    form.elements.es_fundador.checked = Boolean(persona.es_fundador);
-    form.elements.observaciones.value = persona.observaciones || '';
-    setSection('personas');
-    focusPersonaForm();
+    editPersona(editId);
   }
 
   if (deleteId && isAdmin()) {
@@ -962,9 +1106,60 @@ async function copyMessage(event) {
   }
 }
 
+async function copyTextToClipboard(text, okMessage, errorMessage) {
+  try {
+    await navigator.clipboard.writeText(text);
+    setOk(okMessage);
+  } catch (error) {
+    setError(errorMessage);
+  }
+}
+
+async function handleRouterAction(event) {
+  const copyMac = event.target.dataset.copyMac;
+  const solicitarMac = event.target.dataset.solicitarMac;
+  const editRouterPersona = event.target.dataset.editRouterPersona;
+  const routerPersona = event.target.dataset.routerPersona;
+  const routerEstado = event.target.dataset.routerEstado;
+
+  if (copyMac) {
+    await copyTextToClipboard(copyMac, 'MAC copiada.', 'No se pudo copiar la MAC.');
+    return;
+  }
+
+  if (solicitarMac) {
+    await copyTextToClipboard(
+      'Hola, necesito que me pases la MAC del dispositivo para habilitarte el acceso al Starlink.',
+      'Mensaje para solicitar MAC copiado.',
+      'No se pudo copiar el mensaje.'
+    );
+    return;
+  }
+
+  if (editRouterPersona) {
+    editPersona(editRouterPersona);
+    return;
+  }
+
+  if (routerPersona && routerEstado && isAdmin()) {
+    try {
+      const { error } = await state.supabase
+        .from('personas')
+        .update({ router_estado: routerEstado })
+        .eq('id', routerPersona);
+      if (error) throw error;
+      await loadData();
+      setSection('router');
+      setOk(`Estado router actualizado a ${routerEstado}.`);
+    } catch (error) {
+      setError(error);
+    }
+  }
+}
+
 function exportPersonas() {
   downloadCsv('personas.csv', [
-    ['id', 'nombre', 'dependencia', 'estado', 'es_fundador', 'fecha_ingreso', 'telefono_whatsapp', 'mac_1', 'mac_2', 'mac', 'observaciones'],
+    ['id', 'nombre', 'dependencia', 'estado', 'es_fundador', 'fecha_ingreso', 'telefono_whatsapp', 'mac_1', 'mac_2', 'mac', 'router_estado', 'observaciones'],
     ...state.personas.map((persona) => [
       persona.id,
       persona.nombre,
@@ -976,6 +1171,7 @@ function exportPersonas() {
       persona.mac_1,
       persona.mac_2,
       persona.mac,
+      persona.router_estado,
       persona.observaciones
     ])
   ]);

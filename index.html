@@ -46,6 +46,7 @@
           <button type="button" data-section="pagos">Pagos</button>
           <button type="button" data-section="calculo">Calculo mensual</button>
           <button type="button" data-section="mensajes">Mensajes</button>
+          <button type="button" data-section="router">Gestion router / MAC</button>
           <button type="button" data-section="moras">Morosos / suspendidos</button>
           <button type="button" data-section="exportacion">Exportacion</button>
         </nav>
@@ -90,6 +91,12 @@
             <label>Telefono WhatsApp <input type="text" name="telefono_whatsapp" placeholder="5493511234567"></label>
             <label>MAC 1 <input type="text" name="mac_1"></label>
             <label>MAC 2 <input type="text" name="mac_2"></label>
+            <label>Estado router
+              <select name="router_estado" id="persona-router-estado">
+                <option value="BLOQUEADO">BLOQUEADO</option>
+                <option value="HABILITADO">HABILITADO</option>
+              </select>
+            </label>
             <label class="check"><input type="checkbox" name="es_fundador"> Es fundador</label>
             <label class="wide">Observaciones <textarea name="observaciones" rows="2"></textarea></label>
             <div class="form-actions">
@@ -146,6 +153,19 @@
             <button type="button" id="generar-mensajes" class="primary">Generar mensajes</button>
           </div>
           <div id="mensajes-list" class="message-list"></div>
+        </section>
+
+        <section id="router" class="view">
+          <div class="section-title">
+            <div>
+              <h2>Gestion router / MAC</h2>
+              <p class="muted">Prioridades segun pago del mes, estado manual del router y MAC cargada.</p>
+            </div>
+          </div>
+          <div class="toolbar">
+            <label>Mes <input type="month" id="router-mes"></label>
+          </div>
+          <div id="router-list"></div>
         </section>
 
         <section id="moras" class="view">

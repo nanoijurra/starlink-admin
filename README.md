@@ -98,6 +98,22 @@ El usuario debe revisar el mensaje y tocar Enviar dentro de WhatsApp.
 
 Los telefonos deben cargarse en formato internacional, sin simbolos. Ejemplo para Argentina Cordoba: `5493511234567`.
 
+## Gestion router / MAC
+
+La seccion Gestion router / MAC compara el cargo vigente del mes, los pagos registrados y el estado manual del router.
+
+La app no configura el router automaticamente. Solo prioriza acciones para que el administrador marque manualmente personas como `HABILITADO` o `BLOQUEADO`.
+
+Prioridades:
+
+- Pago completo, router bloqueado y MAC cargada: habilitar.
+- Sin pago completo, router habilitado y MAC cargada: revisar bloqueo.
+- Pago completo sin MAC cargada: solicitar MAC.
+- Pago completo, router habilitado y MAC cargada: correcto.
+- Sin pago completo y router bloqueado: sin accion.
+
+Para usar esta seccion en Supabase, ejecutar la migracion `sql/006_migracion_estado_router.sql`.
+
 ## Pruebas manuales
 
 Levantar un servidor local desde la carpeta del proyecto:
