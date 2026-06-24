@@ -324,6 +324,11 @@ th {
   font-weight: 700;
 }
 
+.money-paid {
+  color: var(--primary-dark);
+  font-weight: 750;
+}
+
 .money-adjust {
   color: var(--muted);
 }
@@ -331,6 +336,18 @@ th {
 .money-muted {
   color: var(--muted);
   font-weight: 500;
+}
+
+.pending-today {
+  font-weight: 850;
+}
+
+.pending-ok {
+  color: var(--ok);
+}
+
+.pending-due {
+  color: var(--danger);
 }
 
 .badge {
@@ -358,6 +375,11 @@ th {
   color: #0f5132;
 }
 
+.status-saldo-a-favor {
+  background: #d8f3dc;
+  color: #0b6b3a;
+}
+
 .status-pendiente {
   background: #f8d7da;
   color: #842029;
@@ -369,6 +391,11 @@ th {
 }
 
 .status-no-aplica {
+  background: #e9eef5;
+  color: var(--muted);
+}
+
+.status-sin-cargo {
   background: #e9eef5;
   color: var(--muted);
 }
