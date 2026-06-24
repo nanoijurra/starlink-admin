@@ -125,6 +125,8 @@ Conceptos reales guardados:
 
 La opción `Pago completo del mes` es solo visual para facilitar la carga. No se guarda como concepto real: se descompone en los conceptos reales que correspondan según el cargo mensual.
 
+Si el pago informado supera el total del cargo mensual, el excedente se registra automáticamente como `AJUSTE` con observación de pago excedente.
+
 ## Gestión router / MAC
 
 `router_estado` es manual y representa lo que el administrador registró sobre el estado real en el router.

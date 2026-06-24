@@ -869,7 +869,8 @@ async function savePago(event) {
     const payload = imputaciones.map((imputacion) => ({
       ...basePayload,
       monto: imputacion.monto,
-      concepto: imputacion.concepto
+      concepto: imputacion.concepto,
+      observaciones: imputacion.observaciones || basePayload.observaciones
     }));
 
     const { error } = await state.supabase.from('pagos').insert(payload);

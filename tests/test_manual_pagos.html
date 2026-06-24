@@ -82,7 +82,7 @@
 <body>
   <main>
     <h1>Prueba manual de pagos.js</h1>
-    <p>Validacion de descomponerPagoSegunCargo para pagos mixtos, parciales, simples y excedentes.</p>
+    <p>Validacion de descomponerPagoSegunCargo para pagos exactos, parciales y excedentes con ajuste automatico.</p>
 
     <div id="status" class="status">Ejecutando prueba...</div>
     <div id="results"></div>
@@ -96,31 +96,33 @@
 
     const cases = [
       {
-        name: 'Fundador paga compra inicial + abono',
-        montoPagado: 23663.98,
+        name: 'Fundador paga compra inicial + abono + ajuste',
+        montoPagado: 23000,
         cargo: {
-          monto_a_pagar: 23663.98,
-          abono_base: 1346.43,
-          cargo_equipo: 22317.55,
+          monto_a_pagar: 22298.75,
+          abono_base: 1268.75,
+          cargo_equipo: 21030,
           concepto_equipo: 'COMPRA_INICIAL'
         },
         expected: [
-          { concepto: 'COMPRA_INICIAL', monto: 22317.55 },
-          { concepto: 'ABONO', monto: 1346.43 }
+          { concepto: 'COMPRA_INICIAL', monto: 21030 },
+          { concepto: 'ABONO', monto: 1268.75 },
+          { concepto: 'AJUSTE', monto: 701.25, observaciones: 'Ajuste automático por pago excedente' }
         ]
       },
       {
-        name: 'Ingresante posterior paga regularizacion + abono',
-        montoPagado: 23190.70,
+        name: 'Ingresante posterior paga regularizacion + abono + ajuste',
+        montoPagado: 23000,
         cargo: {
-          monto_a_pagar: 23190.70,
-          abono_base: 1319.50,
-          cargo_equipo: 21871.20,
+          monto_a_pagar: 22298.75,
+          abono_base: 1268.75,
+          cargo_equipo: 21030,
           concepto_equipo: 'REGULARIZACION'
         },
         expected: [
-          { concepto: 'REGULARIZACION', monto: 21871.20 },
-          { concepto: 'ABONO', monto: 1319.50 }
+          { concepto: 'REGULARIZACION', monto: 21030 },
+          { concepto: 'ABONO', monto: 1268.75 },
+          { concepto: 'AJUSTE', monto: 701.25, observaciones: 'Ajuste automático por pago excedente' }
         ]
       },
       {
@@ -137,29 +139,45 @@
         ]
       },
       {
-        name: 'Cargo solo abono',
-        montoPagado: 1346.43,
+        name: 'Cargo solo abono + ajuste',
+        montoPagado: 2000,
         cargo: {
-          monto_a_pagar: 1346.43,
-          abono_base: 1346.43,
+          monto_a_pagar: 1268.75,
+          abono_base: 1268.75,
           cargo_equipo: 0,
           concepto_equipo: null
         },
         expected: [
-          { concepto: 'ABONO', monto: 1346.43 }
+          { concepto: 'ABONO', monto: 1268.75 },
+          { concepto: 'AJUSTE', monto: 731.25, observaciones: 'Ajuste automático por pago excedente' }
         ]
       },
       {
-        name: 'Pago excedente',
-        montoPagado: 24000,
+        name: 'Monto a pagar cero + ajuste',
+        montoPagado: 1000,
+        cargo: {
+          monto_a_pagar: 0,
+          abono_base: 0,
+          cargo_equipo: 0,
+          concepto_equipo: null
+        },
+        expected: [
+          { concepto: 'AJUSTE', monto: 1000, observaciones: 'Ajuste automático por pago excedente' }
+        ]
+      },
+      {
+        name: 'Pago exacto sin ajuste',
+        montoPagado: 23663.98,
         cargo: {
           monto_a_pagar: 23663.98,
           abono_base: 1346.43,
           cargo_equipo: 22317.55,
           concepto_equipo: 'COMPRA_INICIAL'
         },
-        expectedError: true,
-        expected: 'Error: no debe imputar excedente automaticamente'
+        expected: [
+          { concepto: 'COMPRA_INICIAL', monto: 22317.55 },
+          { concepto: 'ABONO', monto: 1346.43 }
+        ]
       }
     ];
 
@@ -173,7 +191,8 @@
 
       return actual.every((item, index) => (
         item.concepto === expected[index].concepto &&
-        sameMoney(item.monto, expected[index].monto)
+        sameMoney(item.monto, expected[index].monto) &&
+        (expected[index].observaciones === undefined || item.observaciones === expected[index].observaciones)
       ));
     }
 
@@ -184,7 +203,7 @@
     function runCase(descomponerPagoSegunCargo, testCase) {
       try {
         const actual = descomponerPagoSegunCargo(testCase.montoPagado, testCase.cargo);
-        const ok = testCase.expectedError ? false : sameResult(actual, testCase.expected);
+        const ok = sameResult(actual, testCase.expected);
         return {
           caso: testCase.name,
           obtenido: actual,
@@ -193,12 +212,11 @@
         };
       } catch (error) {
         const actual = `Error: ${error.message || String(error)}`;
-        const ok = Boolean(testCase.expectedError);
         return {
           caso: testCase.name,
           obtenido: actual,
           esperado: testCase.expected,
-          estado: ok ? 'OK' : 'FALLA'
+          estado: 'FALLA'
         };
       }
     }

@@ -20,9 +20,8 @@ export function descomponerPagoSegunCargo(montoPagado, cargo) {
   if (monto <= 0) return [];
 
   const montoCargo = cargo?.monto_a_pagar === undefined ? null : round2(cargo.monto_a_pagar);
-  if (montoCargo !== null && monto > round2(montoCargo + 0.009)) {
-    throw new Error(`El pago supera el monto del cargo mensual (${formatARS(montoCargo)}). Registra un ajuste por separado.`);
-  }
+  const montoImputable = montoCargo === null ? monto : round2(Math.min(monto, Math.max(0, montoCargo)));
+  const excedente = montoCargo === null ? 0 : round2(monto - Math.max(0, montoCargo));
 
   const cargoEquipo = round2(Math.max(0, Number(
     cargo?.cargo_equipo ?? cargo?.regularizacion_aplicada ?? 0
@@ -30,20 +29,30 @@ export function descomponerPagoSegunCargo(montoPagado, cargo) {
   const conceptoEquipo = cargo?.concepto_equipo || (
     cargoEquipo > 0 && Number(cargo?.regularizacion_aplicada || 0) > 0 ? 'REGULARIZACION' : null
   );
-
-  if (cargoEquipo <= 0 || !conceptoEquipo) {
-    return [{ concepto: 'ABONO', monto }];
-  }
-
-  const montoEquipo = round2(Math.min(monto, cargoEquipo));
-  const montoAbono = round2(monto - montoEquipo);
   const partes = [];
 
-  if (montoEquipo > 0) {
-    partes.push({ concepto: conceptoEquipo, monto: montoEquipo });
+  if (cargoEquipo <= 0 || !conceptoEquipo) {
+    if (montoImputable > 0) {
+      partes.push({ concepto: 'ABONO', monto: montoImputable });
+    }
+  } else {
+    const montoEquipo = round2(Math.min(montoImputable, cargoEquipo));
+    const montoAbono = round2(montoImputable - montoEquipo);
+
+    if (montoEquipo > 0) {
+      partes.push({ concepto: conceptoEquipo, monto: montoEquipo });
+    }
+    if (montoAbono > 0) {
+      partes.push({ concepto: 'ABONO', monto: montoAbono });
+    }
   }
-  if (montoAbono > 0) {
-    partes.push({ concepto: 'ABONO', monto: montoAbono });
+
+  if (excedente > 0.01) {
+    partes.push({
+      concepto: 'AJUSTE',
+      monto: excedente,
+      observaciones: 'Ajuste automático por pago excedente'
+    });
   }
 
   return partes;
