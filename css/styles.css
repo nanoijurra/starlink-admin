@@ -324,6 +324,16 @@ th {
   font-weight: 700;
 }
 
+.saldo-favor {
+  color: var(--ok);
+  font-weight: 700;
+}
+
+.valor-cero {
+  color: var(--muted);
+  font-weight: 500;
+}
+
 .money-paid {
   color: var(--primary-dark);
   font-weight: 750;

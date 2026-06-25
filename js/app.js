@@ -464,6 +464,8 @@ function renderCargosTable(resultado, readonly = false) {
 
   const rows = resultado.cargos.map((cargo) => {
     const cuenta = estadoCuentaCargo(cargo);
+    const ajusteSaldo = cuenta.ajustePagado > 0.01 ? cuenta.ajustePagado : 0;
+    const ajusteClass = ajusteSaldo > 0 ? 'saldo-favor' : 'valor-cero';
 
     return `
       <tr>
@@ -472,7 +474,7 @@ function renderCargosTable(resultado, readonly = false) {
         <td class="number ${cuenta.abonoDelMes <= 0 ? 'money-muted' : ''}">${formatARS(cuenta.abonoDelMes)}</td>
         <td class="number money-total">${formatARS(cuenta.totalDelMes)}</td>
         <td class="number ${cuenta.pagado <= 0 ? 'money-muted' : 'money-paid'}">${formatARS(cuenta.pagado)}</td>
-        <td class="number ${cuenta.ajustePagado <= 0 ? 'money-muted' : 'money-positive'}">${formatARSNegativoVisual(cuenta.ajustePagado)}</td>
+        <td class="number ${ajusteClass}">${formatARSNegativoVisual(ajusteSaldo)}</td>
         <td class="number pending-today ${cuenta.pendiente <= 0 ? 'pending-ok' : 'pending-due'}">${formatARS(cuenta.pendiente)}</td>
         <td><span class="status-pill status-${estadoClass(cuenta.estado)}">${escapeHtml(cuenta.estado)}</span></td>
         <td>${escapeHtml(observacionEstadoCuenta(cargo, cuenta))}</td>
