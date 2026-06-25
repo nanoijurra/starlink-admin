@@ -36,6 +36,7 @@ const state = {
   profiles: [],
   comprobantes: [],
   comprobantesFiltro: 'PENDIENTE',
+  comprobanteProcesandoId: null,
   calculo: null
 };
 
@@ -321,6 +322,20 @@ function comprobanteEstadoClass(estado) {
   return 'comprobante-pendiente';
 }
 
+function comprobantePagoIds(comprobante) {
+  const raw = comprobante?.pago_ids;
+  if (Array.isArray(raw)) return raw.filter(Boolean);
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+    } catch (error) {
+      return [];
+    }
+  }
+  return [];
+}
+
 function renderComprobantesPersona(personaId) {
   const rows = comprobantesPersona(personaId).map((comprobante) => `
     <tr>
@@ -350,6 +365,84 @@ function renderComprobantesPersona(personaId) {
         <tbody>${rows.join('') || '<tr><td colspan="6">Sin comprobantes enviados.</td></tr>'}</tbody>
       </table>
     </div>
+  `;
+}
+
+function pagosExistentesPersonaMes(personaId, mes) {
+  return state.pagos.filter((pago) => (
+    mismaPersona(pago.persona_id, personaId) &&
+    pago.mes_aplicado === mes
+  ));
+}
+
+function renderComprobantePagoPanel() {
+  const comprobante = state.comprobantes.find((item) => item.id === state.comprobanteProcesandoId);
+  if (!isAdmin() || !comprobante || (comprobante.estado || 'PENDIENTE') !== 'PENDIENTE') return '';
+
+  const persona = state.personas.find((item) => mismaPersona(item.id, comprobante.persona_id));
+  const pagosExistentes = pagosExistentesPersonaMes(comprobante.persona_id, comprobante.mes_aplicado);
+  const pagosRows = pagosExistentes.map((pago) => `
+    <tr>
+      <td>${escapeHtml(pago.fecha_pago || '')}</td>
+      <td><span class="badge">${escapeHtml(pago.concepto || '')}</span></td>
+      <td class="number">${formatARS(pago.monto || 0)}</td>
+      <td>${escapeHtml(pago.medio || '')}</td>
+      <td>${escapeHtml(pago.observaciones || '')}</td>
+    </tr>
+  `);
+
+  return `
+    <article class="comprobante-process-panel">
+      <div class="section-title">
+        <div>
+          <h3>Registrar pago desde comprobante</h3>
+          <p class="muted">Revision manual de ADMIN antes de crear pagos reales.</p>
+        </div>
+        <button type="button" data-comprobante-process-cancel>Cancelar</button>
+      </div>
+      <div class="account-grid">
+        <article class="metric"><span>Persona</span><strong>${escapeHtml(persona?.nombre || 'Sin persona')}</strong></article>
+        <article class="metric"><span>Mes aplicado</span><strong>${escapeHtml(comprobante.mes_aplicado || '-')}</strong></article>
+        <article class="metric"><span>Monto informado</span><strong>${comprobante.monto_informado == null ? '-' : formatARS(comprobante.monto_informado)}</strong></article>
+        <article class="metric"><span>Archivo</span><strong>${escapeHtml(comprobante.archivo_nombre || '-')}</strong></article>
+        <article class="metric wide"><span>Observaciones</span><strong>${escapeHtml(comprobante.observaciones || '-')}</strong></article>
+      </div>
+      ${pagosExistentes.length ? '<p class="notice" data-type="error">Esta persona ya tiene pagos registrados para este mes. Revisa antes de confirmar para evitar duplicados.</p>' : ''}
+      <h4>Pagos existentes del mes</h4>
+      <div class="table-wrap compact-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Concepto</th>
+              <th>Monto</th>
+              <th>Medio</th>
+              <th>Observaciones</th>
+            </tr>
+          </thead>
+          <tbody>${pagosRows.join('') || '<tr><td colspan="5">No hay pagos registrados para esta persona y mes.</td></tr>'}</tbody>
+        </table>
+      </div>
+      <form id="comprobante-pago-form" class="grid-form upload-form">
+        <input type="hidden" name="comprobante_id" value="${escapeHtml(comprobante.id)}">
+        <label>Monto a registrar
+          <input type="number" name="monto" min="0" step="0.01" value="${escapeHtml(comprobante.monto_informado ?? '')}" required>
+        </label>
+        <label>Medio
+          <input type="text" name="medio" value="TRANSFERENCIA" required>
+        </label>
+        <label>Fecha de pago
+          <input type="date" name="fecha_pago" value="${escapeHtml(new Date().toISOString().slice(0, 10))}" required>
+        </label>
+        <label class="wide">Observacion del pago
+          <textarea name="observaciones" rows="2" placeholder="Confirmado desde comprobante ${escapeHtml(comprobante.archivo_nombre || '')}"></textarea>
+        </label>
+        <div class="form-actions">
+          <button type="submit" class="primary">Confirmar y registrar pago</button>
+          <button type="button" data-comprobante-process-cancel>Cancelar</button>
+        </div>
+      </form>
+    </article>
   `;
 }
 
@@ -491,8 +584,13 @@ function renderComprobantes() {
 
   const rows = comprobantesFiltrados.map((comprobante) => {
     const persona = state.personas.find((item) => mismaPersona(item.id, comprobante.persona_id));
+    const estado = comprobante.estado || 'PENDIENTE';
+    const pagoIds = comprobantePagoIds(comprobante);
     const discardButton = isAdmin() && (comprobante.estado || 'PENDIENTE') === 'PENDIENTE'
       ? `<button type="button" class="danger" data-comprobante-discard="${escapeHtml(comprobante.id)}">Descartar</button>`
+      : '';
+    const registerButton = isAdmin() && estado === 'PENDIENTE'
+      ? `<button type="button" class="primary" data-comprobante-register="${escapeHtml(comprobante.id)}">Registrar pago</button>`
       : '';
 
     return `
@@ -504,12 +602,13 @@ function renderComprobantes() {
         <td>${escapeHtml(comprobante.archivo_nombre || '-')}</td>
         <td>${escapeHtml(comprobante.archivo_tipo || '-')}<br><span class="muted">${escapeHtml(formatFileSize(comprobante.archivo_tamano || 0))}</span></td>
         <td><span class="comprobante-status ${comprobanteEstadoClass(comprobante.estado)}">${escapeHtml(comprobante.estado || 'PENDIENTE')}</span></td>
+        <td>${pagoIds.length ? `${pagoIds.length} pago(s)<br><span class="muted">${escapeHtml(pagoIds.join(', '))}</span>` : '-'}</td>
         <td>${escapeHtml(comprobante.observaciones || '')}</td>
         <td>
           <div class="table-actions">
             <button type="button" data-comprobante-view="${escapeHtml(comprobante.id)}">Ver comprobante</button>
             ${discardButton}
-            <button type="button" disabled>Registrar pago: proxima etapa</button>
+            ${registerButton}
           </div>
         </td>
       </tr>
@@ -528,6 +627,7 @@ function renderComprobantes() {
       <button type="button" data-comprobante-filter="DESCARTADO" class="${filtro === 'DESCARTADO' ? 'active' : ''}">Descartados</button>
       <button type="button" data-comprobante-filter="TODOS" class="${filtro === 'TODOS' ? 'active' : ''}">Todos</button>
     </div>
+    ${renderComprobantePagoPanel()}
     <table>
       <thead>
         <tr>
@@ -538,11 +638,12 @@ function renderComprobantes() {
           <th>Archivo</th>
           <th>Tipo</th>
           <th>Estado</th>
+          <th>Pagos asociados</th>
           <th>Observaciones</th>
           <th>Acciones</th>
         </tr>
       </thead>
-      <tbody>${rows.join('') || `<tr><td colspan="9">Sin comprobantes para el filtro ${escapeHtml(filtro.toLowerCase())}.</td></tr>`}</tbody>
+      <tbody>${rows.join('') || `<tr><td colspan="10">Sin comprobantes para el filtro ${escapeHtml(filtro.toLowerCase())}.</td></tr>`}</tbody>
     </table>
   `;
 }
@@ -1208,6 +1309,7 @@ function bindEvents() {
   byId('usuarios-table').addEventListener('click', handleUsuariosClick);
   byId('mi-cuenta-content').addEventListener('submit', handleMiCuentaComprobanteSubmit);
   byId('comprobantes-table').addEventListener('click', handleComprobantesAction);
+  byId('comprobantes-table').addEventListener('submit', handleComprobantePagoSubmit);
   byId('pago-form').addEventListener('submit', savePago);
   byId('calcular-btn').addEventListener('click', calcularMes);
   byId('calculo-result').addEventListener('click', closeMonth);
@@ -1307,13 +1409,133 @@ async function handleMiCuentaComprobanteSubmit(event) {
   }
 }
 
+async function registrarPagoCompletoMes({ personaId, mes, monto, fechaPago, medio, observaciones }) {
+  const montoPagado = normalizeNumber(monto);
+  if (!personaId) throw new Error('Falta persona asociada al pago.');
+  if (!MES_CIERRE_PATTERN.test(mes)) throw new Error('El mes aplicado no es valido.');
+  if (!Number.isFinite(montoPagado) || montoPagado <= 0) throw new Error('El monto a registrar no es valido.');
+
+  const cargoAsociado = buscarCargoAsociado(personaId, mes);
+  if (!cargoAsociado) {
+    throw new Error('Primero debe calcularse el mes o existir un cargo vigente para esta persona.');
+  }
+
+  const imputaciones = descomponerPagoSegunCargo(montoPagado, cargoAsociado);
+  if (!imputaciones.length) throw new Error('No se generaron imputaciones para el pago.');
+
+  const basePayload = {
+    persona_id: personaId,
+    fecha_pago: fechaPago,
+    mes_aplicado: mes,
+    medio: medio || 'TRANSFERENCIA',
+    observaciones: observaciones?.trim() || null,
+    created_by: state.session.user.id
+  };
+  const payload = imputaciones.map((imputacion) => ({
+    ...basePayload,
+    monto: imputacion.monto,
+    concepto: imputacion.concepto,
+    observaciones: imputacion.observaciones || basePayload.observaciones
+  }));
+
+  const { data, error } = await state.supabase
+    .from('pagos')
+    .insert(payload)
+    .select('id');
+  if (error) throw error;
+  return data || [];
+}
+
+async function handleComprobantePagoSubmit(event) {
+  if (event.target.id !== 'comprobante-pago-form') return;
+  event.preventDefault();
+
+  if (!isAdmin()) return setError('Solo ADMIN puede registrar pagos desde comprobantes.');
+
+  const raw = formToObject(event.target);
+  const comprobante = state.comprobantes.find((item) => item.id === raw.comprobante_id);
+  if (!comprobante) return setError('No se encontro el comprobante.');
+  if ((comprobante.estado || 'PENDIENTE') !== 'PENDIENTE') {
+    return setError('Solo se pueden procesar comprobantes pendientes.');
+  }
+  if (!comprobante.persona_id || !comprobante.mes_aplicado) {
+    return setError('El comprobante no tiene persona o mes aplicado valido.');
+  }
+
+  const monto = normalizeNumber(raw.monto);
+  if (!Number.isFinite(monto) || monto <= 0) {
+    return setError('El monto a registrar no es valido.');
+  }
+
+  const persona = state.personas.find((item) => mismaPersona(item.id, comprobante.persona_id));
+  const mensaje = `Registrar pago de ${formatARS(monto)} para ${persona?.nombre || 'esta persona'} en ${comprobante.mes_aplicado}?`;
+  if (!confirm(mensaje)) return;
+
+  try {
+    setLoading('Registrando pago desde comprobante...');
+    const observaciones = raw.observaciones?.trim()
+      || `Registrado desde comprobante ${comprobante.archivo_nombre || comprobante.id}`;
+    const pagosCreados = await registrarPagoCompletoMes({
+      personaId: comprobante.persona_id,
+      mes: comprobante.mes_aplicado,
+      monto,
+      fechaPago: raw.fecha_pago,
+      medio: raw.medio || 'TRANSFERENCIA',
+      observaciones
+    });
+    const pagoIds = pagosCreados.map((pago) => pago.id).filter(Boolean);
+    const { error: updateError } = await state.supabase
+      .from('comprobantes_pago')
+      .update({
+        estado: 'PROCESADO',
+        revisado_at: new Date().toISOString(),
+        revisado_by: state.session?.user?.id || null,
+        pago_ids: pagoIds
+      })
+      .eq('id', comprobante.id)
+      .eq('estado', 'PENDIENTE')
+      .select('id')
+      .single();
+    if (updateError) {
+      throw new Error(`Los pagos se crearon, pero no se pudo marcar el comprobante como PROCESADO: ${updateError.message}`);
+    }
+
+    state.comprobanteProcesandoId = null;
+    state.comprobantesFiltro = 'PROCESADO';
+    await loadData();
+    setOk('Pago registrado y comprobante marcado como PROCESADO.');
+  } catch (error) {
+    setError(error);
+  }
+}
+
 async function handleComprobantesAction(event) {
   const filter = event.target.dataset.comprobanteFilter;
   const viewId = event.target.dataset.comprobanteView;
   const discardId = event.target.dataset.comprobanteDiscard;
+  const registerId = event.target.dataset.comprobanteRegister;
+  const cancelProcess = event.target.dataset.comprobanteProcessCancel !== undefined;
 
   if (filter) {
     state.comprobantesFiltro = filter;
+    state.comprobanteProcesandoId = null;
+    renderComprobantes();
+    return;
+  }
+
+  if (cancelProcess) {
+    state.comprobanteProcesandoId = null;
+    renderComprobantes();
+    return;
+  }
+
+  if (registerId && isAdmin()) {
+    const comprobante = state.comprobantes.find((item) => item.id === registerId);
+    if (!comprobante) return setError('No se encontro el comprobante.');
+    if ((comprobante.estado || 'PENDIENTE') !== 'PENDIENTE') {
+      return setError('Solo se pueden procesar comprobantes pendientes.');
+    }
+    state.comprobanteProcesandoId = registerId;
     renderComprobantes();
     return;
   }
@@ -1346,6 +1568,9 @@ async function handleComprobantesAction(event) {
         })
         .eq('id', discardId);
       if (error) throw error;
+      if (state.comprobanteProcesandoId === discardId) {
+        state.comprobanteProcesandoId = null;
+      }
       await loadData();
       setOk('Comprobante descartado.');
     } catch (error) {
