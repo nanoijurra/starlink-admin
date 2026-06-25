@@ -50,6 +50,7 @@
       <section id="app-shell" hidden>
         <nav class="tabs" aria-label="Secciones">
           <button type="button" data-section="dashboard" class="active">Dashboard</button>
+          <button type="button" data-section="panel-mensual">Panel mensual</button>
           <button type="button" data-section="mi-cuenta">Mi cuenta</button>
           <button type="button" data-section="config">Configuracion</button>
           <button type="button" data-section="usuarios">Usuarios</button>
@@ -69,6 +70,17 @@
             <label class="month-inline">Mes <input type="month" id="dashboard-mes"></label>
           </div>
           <div id="dashboard-cards" class="metric-grid"></div>
+        </section>
+
+        <section id="panel-mensual" class="view">
+          <div class="section-title">
+            <div>
+              <h2>Panel mensual</h2>
+              <p class="muted">Vista operativa de control mensual. No modifica datos.</p>
+            </div>
+            <label class="month-inline">Mes <input type="month" id="panel-mes"></label>
+          </div>
+          <div id="panel-mensual-content"></div>
         </section>
 
         <section id="mi-cuenta" class="view">

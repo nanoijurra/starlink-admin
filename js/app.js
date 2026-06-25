@@ -109,8 +109,8 @@ function applyAccess() {
   const allowedSections = role === 'USUARIO'
     ? ['mi-cuenta']
     : role === 'ADMIN'
-      ? ['dashboard', 'config', 'usuarios', 'personas', 'pagos', 'comprobantes', 'calculo', 'mensajes', 'router', 'moras', 'exportacion']
-      : ['dashboard', 'config', 'personas', 'pagos', 'comprobantes', 'calculo', 'mensajes', 'router', 'moras', 'exportacion'];
+      ? ['dashboard', 'panel-mensual', 'config', 'usuarios', 'personas', 'pagos', 'comprobantes', 'calculo', 'mensajes', 'router', 'moras', 'exportacion']
+      : ['dashboard', 'panel-mensual', 'config', 'personas', 'pagos', 'comprobantes', 'calculo', 'mensajes', 'router', 'moras', 'exportacion'];
 
   document.querySelectorAll('.tabs button').forEach((button) => {
     const allowed = allowedSections.includes(button.dataset.section);
@@ -178,6 +178,7 @@ function renderAll() {
   applyAccess();
   renderConfig();
   renderUsuarios();
+  renderPanelMensual();
   renderMiCuenta();
   renderDashboard();
   renderPersonas();
@@ -209,6 +210,258 @@ function renderDashboard() {
   byId('dashboard-cards').innerHTML = metrics
     .map(([label, value]) => `<article class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`)
     .join('');
+}
+
+function panelMonth() {
+  return byId('panel-mes')?.value
+    || byId('calculo-mes')?.value
+    || byId('dashboard-mes')?.value
+    || byId('router-mes')?.value
+    || byId('mensajes-mes')?.value
+    || currentMonth();
+}
+
+function cuentaOperativaPersona(persona, mes) {
+  const cargo = buscarCargoAsociado(persona.id, mes);
+  const cuenta = cargo ? estadoCuentaCargo(cargo) : estadoCuentaDesdePagos(persona.id, mes);
+  const pagosDelMes = pagosExistentesPersonaMes(persona.id, mes);
+  const tieneMac = macsPersona(persona).length > 0;
+  const routerEstado = persona.router_estado || 'BLOQUEADO';
+  const conDeuda = cuenta.pendiente > 0.01;
+  const alDia = cuenta.pendiente <= 0.01 && cuenta.estado !== 'Sin cargo';
+  const pagoParcial = pagosDelMes.length > 0 && conDeuda;
+  const saldoFavorVisual = round2(Math.max(
+    Number(cuenta.saldoAFavor || 0),
+    Number(cargo?.saldo_compensatorio || 0),
+    Number(cargo?.compensacion_aplicada || 0)
+  ));
+  const saldoAFavor = saldoFavorVisual > 0.01 || cuenta.totalAjuste > 0.01;
+  const pagadoYBloqueado = alDia && routerEstado === 'BLOQUEADO';
+  const debeYHabilitado = conDeuda && routerEstado === 'HABILITADO';
+  const sinMac = !tieneMac;
+  const sinProblemaOperativo = alDia && !pagadoYBloqueado && !debeYHabilitado && !sinMac;
+
+  return {
+    persona,
+    cargo,
+    cuenta,
+    pagosDelMes,
+    tieneMac,
+    routerEstado,
+    conDeuda,
+    alDia,
+    pagoParcial,
+    saldoAFavor,
+    saldoFavorVisual,
+    pagadoYBloqueado,
+    debeYHabilitado,
+    sinMac,
+    sinProblemaOperativo
+  };
+}
+
+function panelMetricCard(label, value, detail, tone, section = '') {
+  const nav = section
+    ? `<button type="button" data-panel-nav="${escapeHtml(section)}">Ir</button>`
+    : '';
+  return `
+    <article class="panel-metric panel-tone-${escapeHtml(tone || 'neutral')}">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+      <small>${escapeHtml(detail || '')}</small>
+      ${nav}
+    </article>
+  `;
+}
+
+function renderAccionesUrgentes(comprobantesPendientes, cuentas) {
+  const acciones = [
+    ...comprobantesPendientes.map((comprobante) => ({
+      prioridad: 1,
+      tipo: 'Comprobante pendiente',
+      persona: state.personas.find((item) => mismaPersona(item.id, comprobante.persona_id))?.nombre || 'Sin persona',
+      detalle: `${comprobante.mes_aplicado || ''} - ${comprobante.monto_informado == null ? 'Sin monto' : formatARS(comprobante.monto_informado)}`,
+      destino: 'comprobantes'
+    })),
+    ...cuentas.filter((item) => item.debeYHabilitado).map((item) => ({
+      prioridad: 2,
+      tipo: 'Debe y esta habilitado',
+      persona: item.persona.nombre,
+      detalle: `Pendiente ${formatARS(item.cuenta.pendiente)}. Accion sugerida: bloquear MAC.`,
+      destino: 'router'
+    })),
+    ...cuentas.filter((item) => item.pagadoYBloqueado).map((item) => ({
+      prioridad: 3,
+      tipo: 'Pago y esta bloqueado',
+      persona: item.persona.nombre,
+      detalle: 'Accion sugerida: habilitar MAC.',
+      destino: 'router'
+    })),
+    ...cuentas.filter((item) => item.conDeuda && !item.debeYHabilitado).map((item) => ({
+      prioridad: 4,
+      tipo: 'Persona con deuda',
+      persona: item.persona.nombre,
+      detalle: `Pendiente ${formatARS(item.cuenta.pendiente)}.`,
+      destino: 'pagos'
+    })),
+    ...cuentas.filter((item) => item.sinMac).map((item) => ({
+      prioridad: 5,
+      tipo: 'Persona sin MAC',
+      persona: item.persona.nombre,
+      detalle: 'Accion sugerida: pedir/cargar MAC.',
+      destino: 'personas'
+    }))
+  ].sort((a, b) => a.prioridad - b.prioridad || a.persona.localeCompare(b.persona));
+
+  const rows = acciones.map((accion) => `
+    <tr>
+      <td>${escapeHtml(accion.tipo)}</td>
+      <td>${escapeHtml(accion.persona)}</td>
+      <td>${escapeHtml(accion.detalle)}</td>
+      <td><button type="button" data-panel-nav="${escapeHtml(accion.destino)}">Ir</button></td>
+    </tr>
+  `);
+
+  return `
+    <section class="panel-block">
+      <h3>Acciones urgentes</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Prioridad</th><th>Persona</th><th>Detalle</th><th>Accion</th></tr></thead>
+          <tbody>${rows.join('') || '<tr><td colspan="4">Sin acciones urgentes para este mes.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderPendientesPago(cuentas) {
+  const pendientes = cuentas
+    .filter((item) => item.conDeuda)
+    .sort((a, b) => b.cuenta.pendiente - a.cuenta.pendiente);
+  const rows = pendientes.map((item) => `
+    <tr>
+      <td>${escapeHtml(item.persona.nombre)}</td>
+      <td class="number">${formatARS(item.cuenta.totalDelMes)}</td>
+      <td class="number">${formatARS(item.cuenta.pagado)}</td>
+      <td class="number pending-due">${formatARS(item.cuenta.pendiente)}</td>
+      <td><span class="status-pill status-${estadoClass(item.cuenta.estado)}">${escapeHtml(item.cuenta.estado)}</span></td>
+      <td>
+        <div class="table-actions">
+          <button type="button" data-panel-nav="pagos">Pagos</button>
+          <button type="button" data-panel-nav="mensajes">Mensajes</button>
+        </div>
+      </td>
+    </tr>
+  `);
+
+  return `
+    <section class="panel-block">
+      <h3>Pendientes de pago</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Persona</th>
+              <th>Total del mes</th>
+              <th>Pagado</th>
+              <th>Pendiente hoy</th>
+              <th>Estado</th>
+              <th>Accion</th>
+            </tr>
+          </thead>
+          <tbody>${rows.join('') || '<tr><td colspan="6">Sin pendientes de pago.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderAlertasRouter(cuentas) {
+  const alertas = [
+    ...cuentas.filter((item) => item.pagadoYBloqueado).map((item) => ({
+      tipo: 'Pago y bloqueado',
+      persona: item.persona.nombre,
+      detalle: 'Accion sugerida: habilitar MAC.'
+    })),
+    ...cuentas.filter((item) => item.debeYHabilitado).map((item) => ({
+      tipo: 'Debe y habilitado',
+      persona: item.persona.nombre,
+      detalle: `Pendiente ${formatARS(item.cuenta.pendiente)}. Accion sugerida: bloquear MAC.`
+    })),
+    ...cuentas.filter((item) => item.sinMac).map((item) => ({
+      tipo: 'Falta MAC',
+      persona: item.persona.nombre,
+      detalle: 'Pedir/cargar MAC 1 o MAC 2.'
+    }))
+  ].sort((a, b) => a.persona.localeCompare(b.persona));
+  const rows = alertas.map((alerta) => `
+    <tr>
+      <td>${escapeHtml(alerta.tipo)}</td>
+      <td>${escapeHtml(alerta.persona)}</td>
+      <td>${escapeHtml(alerta.detalle)}</td>
+      <td><button type="button" data-panel-nav="router">Gestion router</button></td>
+    </tr>
+  `);
+
+  return `
+    <section class="panel-block">
+      <h3>Alertas router</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Alerta</th><th>Persona</th><th>Detalle</th><th>Accion</th></tr></thead>
+          <tbody>${rows.join('') || '<tr><td colspan="4">Sin alertas de router.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderPanelMensual() {
+  const container = byId('panel-mensual-content');
+  if (!container) return;
+
+  if (isUsuario()) {
+    container.innerHTML = '<p class="muted">Vista disponible para administracion y lectura.</p>';
+    return;
+  }
+
+  const mes = panelMonth();
+  const personasActivas = state.personas.filter((persona) => persona.estado === 'ACTIVO');
+  const cuentas = personasActivas.map((persona) => cuentaOperativaPersona(persona, mes));
+  const comprobantesPendientes = state.comprobantes.filter((comprobante) => (
+    (comprobante.estado || 'PENDIENTE') === 'PENDIENTE' &&
+    comprobante.mes_aplicado === mes
+  ));
+  const alDia = cuentas.filter((item) => item.sinProblemaOperativo);
+  const conDeuda = cuentas.filter((item) => item.conDeuda);
+  const parciales = cuentas.filter((item) => item.pagoParcial);
+  const saldoFavor = cuentas.filter((item) => item.saldoAFavor);
+  const pagadoYBloqueado = cuentas.filter((item) => item.pagadoYBloqueado);
+  const debeYHabilitado = cuentas.filter((item) => item.debeYHabilitado);
+  const sinMac = cuentas.filter((item) => item.sinMac);
+  const totalPendiente = round2(conDeuda.reduce((total, item) => total + item.cuenta.pendiente, 0));
+  const totalSaldoFavor = round2(saldoFavor.reduce((total, item) => total + item.saldoFavorVisual, 0));
+
+  container.innerHTML = `
+    <div class="summary-line">
+      <span>Mes operativo: <strong>${escapeHtml(mes)}</strong></span>
+      <span>Personas activas: <strong>${personasActivas.length}</strong></span>
+    </div>
+    <div class="panel-metric-grid">
+      ${panelMetricCard('Comprobantes pendientes', String(comprobantesPendientes.length), 'Requieren revision ADMIN', 'warning', 'comprobantes')}
+      ${panelMetricCard('Personas al dia', String(alDia.length), 'Sin pendiente ni problema operativo', 'ok')}
+      ${panelMetricCard('Personas con deuda', String(conDeuda.length), `Total pendiente ${formatARS(totalPendiente)}`, 'danger', 'pagos')}
+      ${panelMetricCard('Pagos parciales', String(parciales.length), 'Tienen pago y saldo pendiente', 'warning', 'pagos')}
+      ${panelMetricCard('Saldo a favor', String(saldoFavor.length), `Total ${formatARSNegativoVisual(totalSaldoFavor)}`, 'ok')}
+      ${panelMetricCard('Pago y bloqueado', String(pagadoYBloqueado.length), 'Accion sugerida: habilitar MAC', 'warning', 'router')}
+      ${panelMetricCard('Debe y habilitado', String(debeYHabilitado.length), 'Accion sugerida: bloquear MAC', 'danger', 'router')}
+      ${panelMetricCard('Personas sin MAC', String(sinMac.length), 'Accion sugerida: pedir/cargar MAC', 'neutral', 'personas')}
+    </div>
+    ${renderAccionesUrgentes(comprobantesPendientes, cuentas)}
+    ${renderPendientesPago(cuentas)}
+    ${renderAlertasRouter(cuentas)}
+  `;
 }
 
 function renderConfig() {
@@ -1230,6 +1483,7 @@ async function bootAuthenticated(session) {
 
 async function boot() {
   byId('dashboard-mes').value = currentMonth();
+  byId('panel-mes').value = currentMonth();
   byId('mi-cuenta-mes').value = currentMonth();
   byId('calculo-mes').value = currentMonth();
   byId('mensajes-mes').value = currentMonth();
@@ -1295,6 +1549,8 @@ function bindEvents() {
   });
 
   byId('dashboard-mes').addEventListener('change', renderDashboard);
+  byId('panel-mes').addEventListener('change', renderPanelMensual);
+  byId('panel-mensual-content').addEventListener('click', handlePanelMensualAction);
   byId('mi-cuenta-mes').addEventListener('change', renderMiCuenta);
   byId('router-mes').addEventListener('change', renderRouter);
   byId('filtro-pago-persona').addEventListener('change', renderPagos);
@@ -1576,6 +1832,40 @@ async function handleComprobantesAction(event) {
     } catch (error) {
       setError(error);
     }
+  }
+}
+
+function handlePanelMensualAction(event) {
+  const targetSection = event.target.dataset.panelNav;
+  if (!targetSection) return;
+
+  const mes = panelMonth();
+  if (targetSection === 'comprobantes') {
+    state.comprobantesFiltro = 'PENDIENTE';
+    setSection('comprobantes');
+    renderComprobantes();
+    return;
+  }
+  if (targetSection === 'pagos') {
+    byId('filtro-pago-mes').value = mes;
+    setSection('pagos');
+    renderPagos();
+    return;
+  }
+  if (targetSection === 'mensajes') {
+    byId('mensajes-mes').value = mes;
+    setSection('mensajes');
+    renderMensajes();
+    return;
+  }
+  if (targetSection === 'router') {
+    byId('router-mes').value = mes;
+    setSection('router');
+    renderRouter();
+    return;
+  }
+  if (targetSection === 'personas') {
+    setSection('personas');
   }
 }
 

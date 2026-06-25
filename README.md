@@ -117,6 +117,12 @@ http://localhost:8000
 7. Revisar Gestión router / MAC.
 8. Marcar `HABILITADO` o `BLOQUEADO` según la acción real hecha en el router.
 
+## Panel mensual
+
+`Panel mensual` es una vista operativa para `ADMIN` y `LECTURA`. Usa el mes seleccionado y resume comprobantes pendientes, personas al dia, personas con deuda, pagos parciales, saldo a favor, alertas de router y personas sin MAC.
+
+El panel no registra pagos, no modifica comprobantes y no cambia el router. Solo muestra indicadores, listas de acciones sugeridas y accesos internos a las secciones existentes.
+
 ## Pagos
 
 Conceptos reales guardados:
