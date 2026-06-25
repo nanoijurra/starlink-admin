@@ -384,37 +384,39 @@ function observacionCargo(cargo) {
 }
 
 function estadoCuentaCargo(cargo) {
-  const equipoDelMes = round2(Math.max(0, Number(cargo.cargo_equipo ?? cargo.regularizacion_aplicada ?? 0)));
-  const abonoDelMes = round2(Math.max(0, Number(cargo.abono_base || 0)));
-  const totalDelMes = round2(Number(cargo.monto_a_pagar ?? (
-    abonoDelMes +
-    equipoDelMes -
-    Number(cargo.compensacion_aplicada || 0)
-  )));
-  const pagado = pagosPersonaMesConceptos(cargo.persona_id, cargo.mes, ['COMPRA_INICIAL', 'REGULARIZACION', 'ABONO', 'AJUSTE']);
-  const ajustePagado = pagosPersonaMes(cargo.persona_id, cargo.mes, 'AJUSTE');
-  const pendiente = pagado + 0.01 >= totalDelMes ? 0 : round2(Math.max(totalDelMes - pagado, 0));
-  const saldoAFavor = round2(Math.max(pagado - totalDelMes, ajustePagado, 0));
+  const pagadoEquipoMes = pagosPersonaMesConceptos(cargo.persona_id, cargo.mes, ['COMPRA_INICIAL', 'REGULARIZACION']);
+  const pagadoAbonoMes = pagosPersonaMes(cargo.persona_id, cargo.mes, 'ABONO');
+  const totalAjuste = pagosPersonaMes(cargo.persona_id, cargo.mes, 'AJUSTE');
+  const equipoDelMes = round2(Math.max(0, Number(cargo.cargo_equipo ?? cargo.regularizacion_aplicada ?? 0), pagadoEquipoMes));
+  const abonoDelMes = round2(Math.max(0, Number(cargo.abono_base || 0), pagadoAbonoMes));
+  const compensacionAplicada = round2(Math.max(0, Number(cargo.compensacion_aplicada || 0)));
+  const totalDelMes = round2(Math.max(equipoDelMes + abonoDelMes - compensacionAplicada, 0));
+  const pagadoSinAjuste = round2(pagadoEquipoMes + pagadoAbonoMes);
+  const pagado = round2(pagadoSinAjuste + totalAjuste);
+  const pendiente = pagadoSinAjuste + 0.01 >= totalDelMes ? 0 : round2(Math.max(totalDelMes - pagadoSinAjuste, 0));
+  const saldoAFavor = totalAjuste > 0.01 ? totalAjuste : 0;
   let estado = 'Sin cargo';
 
-  if (saldoAFavor > 0.01) {
-    estado = 'Saldo a favor';
-  } else if (totalDelMes <= 0.009 && pagado <= 0.009) {
+  if (totalDelMes <= 0.01 && pagado <= 0.01) {
     estado = 'Sin cargo';
-  } else if (pendiente <= 0.009) {
-    estado = 'Pagado';
-  } else if (pagado <= 0.009) {
+  } else if (pendiente <= 0.01 && totalAjuste > 0.01) {
+    estado = 'Saldo a favor';
+  } else if (pendiente <= 0.01) {
+    estado = 'Al día';
+  } else if (pagadoSinAjuste <= 0.01) {
     estado = 'Pendiente';
   } else {
     estado = 'Parcial';
   }
 
   return {
+    pagadoEquipoMes,
+    pagadoAbonoMes,
     equipoDelMes,
     abonoDelMes,
     totalDelMes,
     pagado,
-    ajustePagado,
+    totalAjuste,
     pendiente,
     saldoAFavor,
     estado
@@ -424,12 +426,14 @@ function estadoCuentaCargo(cargo) {
 function observacionEstadoCuenta(cargo, cuenta) {
   let base = 'Cuota mensual';
   const conceptoEquipo = cargo.concepto_equipo || (
-    cuenta.equipoDelMes > 0 && Number(cargo.regularizacion_aplicada || 0) > 0 ? 'REGULARIZACION' : null
+    cuenta.pagadoEquipoMes > 0 && pagosPersonaMes(cargo.persona_id, cargo.mes, 'REGULARIZACION') > 0 ? 'REGULARIZACION' : null
   );
   if (conceptoEquipo === 'COMPRA_INICIAL') {
     base = 'Compra inicial + abono mensual';
   } else if (conceptoEquipo === 'REGULARIZACION') {
     base = 'Regularizacion + abono mensual';
+  } else if (cuenta.pagadoEquipoMes > 0) {
+    base = 'Compra inicial + abono mensual';
   } else if (Number(cargo.compensacion_aplicada || 0) > 0) {
     base = 'Cuota reducida por saldo a favor';
   }
@@ -437,8 +441,8 @@ function observacionEstadoCuenta(cargo, cuenta) {
   if (cuenta.estado === 'Saldo a favor') {
     return `${base} pagados. Saldo a favor: ${formatARSNegativoVisual(cuenta.saldoAFavor)}`;
   }
-  if (cuenta.estado === 'Pagado') {
-    return `${base} pagados`;
+  if (cuenta.estado === 'Al día') {
+    return base === 'Cuota mensual' ? 'Cuota mensual pagada' : `${base} pagados`;
   }
   if (cuenta.estado === 'Parcial') {
     return `${base}. Pago parcial`;
@@ -464,7 +468,7 @@ function renderCargosTable(resultado, readonly = false) {
 
   const rows = resultado.cargos.map((cargo) => {
     const cuenta = estadoCuentaCargo(cargo);
-    const ajusteSaldo = cuenta.ajustePagado > 0.01 ? cuenta.ajustePagado : 0;
+    const ajusteSaldo = cuenta.saldoAFavor > 0.01 ? cuenta.saldoAFavor : 0;
     const ajusteClass = ajusteSaldo > 0 ? 'saldo-favor' : 'valor-cero';
 
     return `

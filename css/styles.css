@@ -385,6 +385,11 @@ th {
   color: #0f5132;
 }
 
+.status-al-dia {
+  background: #d1e7dd;
+  color: #0f5132;
+}
+
 .status-saldo-a-favor {
   background: #d8f3dc;
   color: #0b6b3a;
