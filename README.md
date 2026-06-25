@@ -162,7 +162,7 @@ Cada comprobante se guarda en el bucket privado `comprobantes-pago` y en la tabl
 Estados:
 
 - `PENDIENTE`: enviado por el usuario y pendiente de revision.
-- `PROCESADO`: reservado para una etapa posterior de registro de pago.
+- `PROCESADO`: revisado por `ADMIN` y vinculado a pagos reales registrados manualmente.
 - `DESCARTADO`: descartado manualmente por `ADMIN`.
 
 Roles:
@@ -174,6 +174,8 @@ Roles:
 La accion `Registrar pago` queda indicada como proxima etapa. No se crea ningun pago automaticamente desde un comprobante.
 
 Descartar un comprobante no borra el registro ni el archivo de Storage. Queda como trazabilidad. La bandeja principal muestra `PENDIENTE` por defecto; los comprobantes `DESCARTADO` pueden consultarse desde el filtro `Descartados` o desde `Todos`.
+
+Desde la bandeja, `ADMIN` puede usar `Registrar pago` solo sobre comprobantes `PENDIENTE`. La app muestra persona, mes, monto, archivo, observaciones y pagos existentes del mismo mes para evitar duplicados. El administrador debe confirmar manualmente; recien entonces se registra como `Pago completo del mes`, se descompone en conceptos reales y el comprobante pasa a `PROCESADO` con los `pago_ids` asociados.
 
 ## Gestión router / MAC
 

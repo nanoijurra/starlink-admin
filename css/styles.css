@@ -663,6 +663,24 @@ th {
   color: #fff;
 }
 
+.comprobante-process-panel {
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--primary);
+  border-radius: 8px;
+  background: #fff;
+  padding: 16px;
+  margin-bottom: 14px;
+}
+
+.comprobante-process-panel h3,
+.comprobante-process-panel h4 {
+  margin-top: 0;
+}
+
+.compact-table {
+  margin-bottom: 14px;
+}
+
 .share-metadata {
   display: grid;
   gap: 10px;
