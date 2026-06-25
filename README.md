@@ -158,6 +158,28 @@ Los teléfonos deben cargarse en formato internacional, sin símbolos. Ejemplo p
 5493511234567
 ```
 
+## Prueba tecnica: recibir comprobantes desde Android
+
+La app incluye una prueba tecnica para recibir comprobantes compartidos desde Android usando Web Share Target.
+
+Requisitos:
+
+- La app debe estar publicada por HTTPS, por ejemplo en GitHub Pages.
+- Hay que instalar la PWA en Android desde el navegador compatible.
+- Luego se puede compartir un PDF/JPG/PNG/WebP desde el celular hacia `Starlink ACC`.
+
+Flujo esperado:
+
+1. Abrir un comprobante en banco, galeria o archivos.
+2. Tocar Compartir.
+3. Elegir `Starlink ACC`.
+4. La app abre `share-target.html`.
+5. La pantalla muestra nombre, tipo, tamano y fecha de recepcion.
+6. Si es imagen, muestra vista previa.
+7. Si es PDF, informa que el PDF fue recibido.
+
+Esta prueba solo verifica recepcion del archivo. No registra pagos, no sube archivos a Supabase y no reemplaza todavia la carga manual.
+
 ## Pruebas manuales
 
 Levantar servidor local desde la carpeta del proyecto:

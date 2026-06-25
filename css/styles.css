@@ -453,6 +453,62 @@ th {
   font-family: inherit;
 }
 
+.small-link {
+  align-self: center;
+  color: var(--primary);
+  font-size: 0.9rem;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.small-link:hover {
+  text-decoration: underline;
+}
+
+.share-page {
+  margin-top: 32px;
+}
+
+.share-status,
+.share-file,
+.share-preview {
+  margin-top: 16px;
+}
+
+.share-metadata {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.share-metadata div {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 8px 0;
+}
+
+.share-metadata dt {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.share-metadata dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.share-preview img {
+  display: block;
+  width: min(100%, 720px);
+  max-height: 70vh;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
 .router-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

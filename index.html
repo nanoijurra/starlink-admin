@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Starlink Admin ACC Cordoba</title>
+    <link rel="manifest" href="./manifest.webmanifest">
     <link rel="stylesheet" href="./css/styles.css">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   </head>
@@ -185,11 +186,13 @@
             <button type="button" id="export-personas">Personas CSV</button>
             <button type="button" id="export-pagos">Pagos CSV</button>
             <button type="button" id="export-cargos">Cargos CSV</button>
+            <a class="small-link" href="./share-target.html">Prueba recepcion comprobantes</a>
           </div>
         </section>
       </section>
     </main>
 
+    <script type="module" src="./js/pwa.js"></script>
     <script type="module" src="./js/app.js"></script>
   </body>
 </html>

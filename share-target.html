@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Comprobante recibido - Starlink ACC</title>
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="stylesheet" href="./css/styles.css">
+  </head>
+  <body>
+    <main class="share-page">
+      <section class="panel">
+        <p class="eyebrow">Prueba tecnica</p>
+        <h1>Comprobante recibido</h1>
+        <p class="muted">Prueba tecnica de recepcion de comprobantes</p>
+        <p class="notice" data-type="ok">
+          Prueba tecnica: el archivo fue recibido por la app. Todavia no se registra ningun pago.
+        </p>
+
+        <div id="share-status" class="share-status">Buscando comprobante recibido...</div>
+        <div id="share-file" class="share-file"></div>
+        <div id="share-preview" class="share-preview"></div>
+
+        <div class="form-actions">
+          <button type="button" class="primary" id="volver-app">Volver a la app</button>
+          <button type="button" class="danger" id="descartar-comprobante">Descartar comprobante</button>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="./js/share-target.js"></script>
+  </body>
+</html>
