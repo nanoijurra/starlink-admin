@@ -34,6 +34,8 @@ const state = {
   cierres: [],
   cargos: [],
   profiles: [],
+  comprobantes: [],
+  comprobantesFiltro: 'PENDIENTE',
   calculo: null
 };
 
@@ -106,8 +108,8 @@ function applyAccess() {
   const allowedSections = role === 'USUARIO'
     ? ['mi-cuenta']
     : role === 'ADMIN'
-      ? ['dashboard', 'config', 'usuarios', 'personas', 'pagos', 'calculo', 'mensajes', 'router', 'moras', 'exportacion']
-      : ['dashboard', 'config', 'personas', 'pagos', 'calculo', 'mensajes', 'router', 'moras', 'exportacion'];
+      ? ['dashboard', 'config', 'usuarios', 'personas', 'pagos', 'comprobantes', 'calculo', 'mensajes', 'router', 'moras', 'exportacion']
+      : ['dashboard', 'config', 'personas', 'pagos', 'comprobantes', 'calculo', 'mensajes', 'router', 'moras', 'exportacion'];
 
   document.querySelectorAll('.tabs button').forEach((button) => {
     const allowed = allowedSections.includes(button.dataset.section);
@@ -145,16 +147,17 @@ async function loadTable(name, query = '*') {
 
 async function loadData() {
   setLoading('Cargando datos...');
-  const [configs, personas, pagos, cierres, cargos, profiles] = await Promise.all([
+  const [configs, personas, pagos, cierres, cargos, profiles, comprobantes] = await Promise.all([
     state.supabase.from('app_config').select('*').order('updated_at', { ascending: false }).limit(1),
     state.supabase.from('personas').select('*').order('nombre'),
     state.supabase.from('pagos').select('*').order('fecha_pago', { ascending: false }),
     state.supabase.from('cierres_mensuales').select('*').order('mes', { ascending: false }),
     state.supabase.from('cargos_mensuales').select('*').order('mes', { ascending: false }),
-    state.supabase.from('profiles').select('*').order('email')
+    state.supabase.from('profiles').select('*').order('email'),
+    state.supabase.from('comprobantes_pago').select('*').order('created_at', { ascending: false })
   ]);
 
-  for (const result of [configs, personas, pagos, cierres, cargos, profiles]) {
+  for (const result of [configs, personas, pagos, cierres, cargos, profiles, comprobantes]) {
     if (result.error) throw result.error;
   }
 
@@ -164,6 +167,7 @@ async function loadData() {
   state.cierres = cierres.data || [];
   state.cargos = cargos.data || [];
   state.profiles = profiles.data || [];
+  state.comprobantes = comprobantes.data || [];
 
   renderAll();
   showNotice('', 'info');
@@ -177,6 +181,7 @@ function renderAll() {
   renderDashboard();
   renderPersonas();
   renderPagos();
+  renderComprobantes();
   renderCalculo();
   renderMensajes();
   renderRouter();
@@ -297,6 +302,57 @@ function renderUsuarios() {
   `;
 }
 
+function comprobantesPersona(personaId) {
+  return state.comprobantes
+    .filter((comprobante) => mismaPersona(comprobante.persona_id, personaId))
+    .sort((a, b) => `${b.created_at || ''}`.localeCompare(`${a.created_at || ''}`));
+}
+
+function formatFileSize(bytes) {
+  const value = Number(bytes || 0);
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(2)} MB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${value} bytes`;
+}
+
+function comprobanteEstadoClass(estado) {
+  if (estado === 'PROCESADO') return 'comprobante-procesado';
+  if (estado === 'DESCARTADO') return 'comprobante-descartado';
+  return 'comprobante-pendiente';
+}
+
+function renderComprobantesPersona(personaId) {
+  const rows = comprobantesPersona(personaId).map((comprobante) => `
+    <tr>
+      <td>${escapeHtml(new Date(comprobante.created_at).toLocaleString('es-AR'))}</td>
+      <td>${escapeHtml(comprobante.mes_aplicado || '')}</td>
+      <td class="number">${comprobante.monto_informado == null ? '-' : formatARS(comprobante.monto_informado)}</td>
+      <td>${escapeHtml(comprobante.archivo_nombre || '-')}</td>
+      <td><span class="comprobante-status ${comprobanteEstadoClass(comprobante.estado)}">${escapeHtml(comprobante.estado || 'PENDIENTE')}</span></td>
+      <td>${escapeHtml(comprobante.observaciones || '')}</td>
+    </tr>
+  `);
+
+  return `
+    <h3>Mis comprobantes</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Mes</th>
+            <th>Monto informado</th>
+            <th>Archivo</th>
+            <th>Estado</th>
+            <th>Observaciones</th>
+          </tr>
+        </thead>
+        <tbody>${rows.join('') || '<tr><td colspan="6">Sin comprobantes enviados.</td></tr>'}</tbody>
+      </table>
+    </div>
+  `;
+}
+
 function renderMiCuenta() {
   const container = byId('mi-cuenta-content');
   if (!container) return;
@@ -374,6 +430,26 @@ function renderMiCuenta() {
     </div>
     <p class="muted">${escapeHtml(observacionCuenta)}</p>
 
+    <article class="upload-card">
+      <h3>Subir comprobante</h3>
+      <p class="muted">El comprobante queda pendiente de revision. No registra pagos automaticamente.</p>
+      <form id="mi-cuenta-comprobante-form" class="grid-form upload-form">
+        <label>Archivo
+          <input type="file" name="archivo" accept="image/jpeg,image/png,image/webp,application/pdf" required>
+        </label>
+        <label>Mes aplicado
+          <input type="month" name="mes_aplicado" value="${escapeHtml(mes)}" required>
+        </label>
+        <label>Monto informado
+          <input type="number" name="monto_informado" min="0" step="0.01" placeholder="0.00">
+        </label>
+        <label class="wide">Observaciones
+          <textarea name="observaciones" rows="2" placeholder="Datos opcionales para administracion"></textarea>
+        </label>
+        <button type="submit" class="primary">Enviar comprobante</button>
+      </form>
+    </article>
+
     <h3>Mis pagos</h3>
     <div class="table-wrap">
       <table>
@@ -389,6 +465,85 @@ function renderMiCuenta() {
         <tbody>${pagosRows.join('') || '<tr><td colspan="5">Sin pagos registrados.</td></tr>'}</tbody>
       </table>
     </div>
+
+    ${renderComprobantesPersona(persona.id)}
+  `;
+}
+
+function renderComprobantes() {
+  const container = byId('comprobantes-table');
+  if (!container) return;
+
+  if (isUsuario()) {
+    container.innerHTML = '<p class="muted">Vista disponible para administracion y lectura.</p>';
+    return;
+  }
+
+  const counts = state.comprobantes.reduce((acc, comprobante) => {
+    const estado = comprobante.estado || 'PENDIENTE';
+    acc[estado] = (acc[estado] || 0) + 1;
+    return acc;
+  }, { PENDIENTE: 0, PROCESADO: 0, DESCARTADO: 0 });
+  const filtro = state.comprobantesFiltro || 'PENDIENTE';
+  const comprobantesFiltrados = filtro === 'TODOS'
+    ? state.comprobantes
+    : state.comprobantes.filter((comprobante) => (comprobante.estado || 'PENDIENTE') === filtro);
+
+  const rows = comprobantesFiltrados.map((comprobante) => {
+    const persona = state.personas.find((item) => mismaPersona(item.id, comprobante.persona_id));
+    const discardButton = isAdmin() && (comprobante.estado || 'PENDIENTE') === 'PENDIENTE'
+      ? `<button type="button" class="danger" data-comprobante-discard="${escapeHtml(comprobante.id)}">Descartar</button>`
+      : '';
+
+    return `
+      <tr>
+        <td>${escapeHtml(new Date(comprobante.created_at).toLocaleString('es-AR'))}</td>
+        <td>${escapeHtml(persona?.nombre || 'Sin persona')}</td>
+        <td>${escapeHtml(comprobante.mes_aplicado || '')}</td>
+        <td class="number">${comprobante.monto_informado == null ? '-' : formatARS(comprobante.monto_informado)}</td>
+        <td>${escapeHtml(comprobante.archivo_nombre || '-')}</td>
+        <td>${escapeHtml(comprobante.archivo_tipo || '-')}<br><span class="muted">${escapeHtml(formatFileSize(comprobante.archivo_tamano || 0))}</span></td>
+        <td><span class="comprobante-status ${comprobanteEstadoClass(comprobante.estado)}">${escapeHtml(comprobante.estado || 'PENDIENTE')}</span></td>
+        <td>${escapeHtml(comprobante.observaciones || '')}</td>
+        <td>
+          <div class="table-actions">
+            <button type="button" data-comprobante-view="${escapeHtml(comprobante.id)}">Ver comprobante</button>
+            ${discardButton}
+            <button type="button" disabled>Registrar pago: proxima etapa</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  });
+
+  container.innerHTML = `
+    <div class="comprobantes-summary">
+      <article><span>Pendientes</span><strong>${counts.PENDIENTE || 0}</strong></article>
+      <article><span>Procesados</span><strong>${counts.PROCESADO || 0}</strong></article>
+      <article><span>Descartados</span><strong>${counts.DESCARTADO || 0}</strong></article>
+    </div>
+    <div class="comprobantes-filters" aria-label="Filtro de comprobantes por estado">
+      <button type="button" data-comprobante-filter="PENDIENTE" class="${filtro === 'PENDIENTE' ? 'active' : ''}">Pendientes</button>
+      <button type="button" data-comprobante-filter="PROCESADO" class="${filtro === 'PROCESADO' ? 'active' : ''}">Procesados</button>
+      <button type="button" data-comprobante-filter="DESCARTADO" class="${filtro === 'DESCARTADO' ? 'active' : ''}">Descartados</button>
+      <button type="button" data-comprobante-filter="TODOS" class="${filtro === 'TODOS' ? 'active' : ''}">Todos</button>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Fecha</th>
+          <th>Persona</th>
+          <th>Mes</th>
+          <th>Monto</th>
+          <th>Archivo</th>
+          <th>Tipo</th>
+          <th>Estado</th>
+          <th>Observaciones</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>${rows.join('') || `<tr><td colspan="9">Sin comprobantes para el filtro ${escapeHtml(filtro.toLowerCase())}.</td></tr>`}</tbody>
+    </table>
   `;
 }
 
@@ -1051,6 +1206,8 @@ function bindEvents() {
   byId('personas-table').addEventListener('click', handlePersonaAction);
   byId('usuarios-table').addEventListener('change', handleUsuariosChange);
   byId('usuarios-table').addEventListener('click', handleUsuariosClick);
+  byId('mi-cuenta-content').addEventListener('submit', handleMiCuentaComprobanteSubmit);
+  byId('comprobantes-table').addEventListener('click', handleComprobantesAction);
   byId('pago-form').addEventListener('submit', savePago);
   byId('calcular-btn').addEventListener('click', calcularMes);
   byId('calculo-result').addEventListener('click', closeMonth);
@@ -1061,6 +1218,140 @@ function bindEvents() {
   byId('export-personas').addEventListener('click', exportPersonas);
   byId('export-pagos').addEventListener('click', () => exportPagos(state.pagos, 'pagos.csv'));
   byId('export-cargos').addEventListener('click', exportCargos);
+}
+
+function safeStorageFileName(name) {
+  return String(name || 'comprobante')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .replace(/_+/g, '_')
+    .slice(0, 120) || 'comprobante';
+}
+
+function comprobanteStoragePath(personaId, mes, file) {
+  const id = globalThis.crypto?.randomUUID
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `${personaId}/${mes}/${Date.now()}-${id}-${safeStorageFileName(file.name)}`;
+}
+
+async function uploadComprobante({ personaId, mes, monto, observaciones, file }) {
+  if (!personaId) throw new Error('Tu cuenta no esta vinculada a una persona.');
+  if (!file) throw new Error('Selecciona un archivo de comprobante.');
+  if (!MES_CIERRE_PATTERN.test(mes)) throw new Error('Selecciona un mes valido.');
+  const montoInformado = monto === null || monto === '' ? null : normalizeNumber(monto);
+  if (montoInformado !== null && montoInformado < 0) {
+    throw new Error('El monto informado no puede ser negativo.');
+  }
+
+  const archivoPath = comprobanteStoragePath(personaId, mes, file);
+  const { error: uploadError } = await state.supabase
+    .storage
+    .from('comprobantes-pago')
+    .upload(archivoPath, file, {
+      contentType: file.type || 'application/octet-stream',
+      upsert: false
+    });
+  if (uploadError) throw uploadError;
+
+  const payload = {
+    persona_id: personaId,
+    mes_aplicado: mes,
+    monto_informado: montoInformado,
+    archivo_bucket: 'comprobantes-pago',
+    archivo_path: archivoPath,
+    archivo_nombre: file.name || 'comprobante',
+    archivo_tipo: file.type || 'application/octet-stream',
+    archivo_tamano: file.size || 0,
+    estado: 'PENDIENTE',
+    observaciones: observaciones?.trim() || null,
+    created_by: state.session?.user?.id || null
+  };
+
+  const { error: insertError } = await state.supabase
+    .from('comprobantes_pago')
+    .insert(payload);
+  if (insertError) throw insertError;
+}
+
+async function handleMiCuentaComprobanteSubmit(event) {
+  if (event.target.id !== 'mi-cuenta-comprobante-form') return;
+  event.preventDefault();
+
+  if (!isUsuario() || !state.profile?.persona_id) {
+    return setError('Tu cuenta no esta vinculada a una persona.');
+  }
+
+  const form = event.target;
+  const file = form.elements.archivo.files?.[0] || null;
+  const mes = form.elements.mes_aplicado.value;
+  const monto = form.elements.monto_informado.value;
+  const observaciones = form.elements.observaciones.value;
+
+  try {
+    setLoading('Subiendo comprobante...');
+    await uploadComprobante({
+      personaId: state.profile.persona_id,
+      mes,
+      monto,
+      observaciones,
+      file
+    });
+    form.reset();
+    form.elements.mes_aplicado.value = mes;
+    await loadData();
+    setOk('Comprobante enviado. Queda pendiente de revision.');
+  } catch (error) {
+    setError(error);
+  }
+}
+
+async function handleComprobantesAction(event) {
+  const filter = event.target.dataset.comprobanteFilter;
+  const viewId = event.target.dataset.comprobanteView;
+  const discardId = event.target.dataset.comprobanteDiscard;
+
+  if (filter) {
+    state.comprobantesFiltro = filter;
+    renderComprobantes();
+    return;
+  }
+
+  if (viewId) {
+    const comprobante = state.comprobantes.find((item) => item.id === viewId);
+    if (!comprobante) return;
+    try {
+      const { data, error } = await state.supabase
+        .storage
+        .from(comprobante.archivo_bucket || 'comprobantes-pago')
+        .createSignedUrl(comprobante.archivo_path, 60 * 10);
+      if (error) throw error;
+      window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      setError(error);
+    }
+  }
+
+  if (discardId && isAdmin()) {
+    const comprobante = state.comprobantes.find((item) => item.id === discardId);
+    if (!confirm(`Descartar comprobante de ${comprobante?.archivo_nombre || 'archivo'}?`)) return;
+    try {
+      const { error } = await state.supabase
+        .from('comprobantes_pago')
+        .update({
+          estado: 'DESCARTADO',
+          revisado_at: new Date().toISOString(),
+          revisado_by: state.session?.user?.id || null
+        })
+        .eq('id', discardId);
+      if (error) throw error;
+      await loadData();
+      setOk('Comprobante descartado.');
+    } catch (error) {
+      setError(error);
+    }
+  }
 }
 
 async function saveConfig(event) {

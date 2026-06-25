@@ -74,6 +74,7 @@ Ejecutar en Supabase SQL Editor en este orden:
 6. `sql/005_migracion_contacto_mac.sql`
 7. `sql/006_migracion_estado_router.sql`
 8. `sql/007_migracion_usuarios_personas.sql`
+9. `sql/008_migracion_comprobantes_pago.sql`
 
 Nota: hay dos migraciones con numeración `004`. Es una numeración repetida; no impide ejecutar la base si se corren ambas antes de `005` y `006`.
 
@@ -145,7 +146,34 @@ El administrador debe vincular cada usuario con una persona existente en `person
 Tu cuenta esta pendiente de vinculacion con una persona. Avisa al administrador.
 ```
 
-Esta etapa no permite a usuarios comunes registrar pagos, editar MAC/router ni subir comprobantes automaticamente.
+Esta etapa no permite a usuarios comunes registrar pagos ni editar MAC/router. Los usuarios vinculados pueden subir comprobantes como pendientes de revision.
+
+## Comprobantes pendientes
+
+La app permite recibir comprobantes de pago sin crear pagos automaticamente.
+
+Canales de carga:
+
+- Desde `Mi cuenta`, un usuario `USUARIO` vinculado puede subir PDF/JPG/PNG/WebP, indicar mes, monto informado y observaciones.
+- Desde Android, la PWA puede recibir un archivo compartido mediante Web Share Target y guardarlo como comprobante pendiente.
+
+Cada comprobante se guarda en el bucket privado `comprobantes-pago` y en la tabla `comprobantes_pago` con estado inicial `PENDIENTE`.
+
+Estados:
+
+- `PENDIENTE`: enviado por el usuario y pendiente de revision.
+- `PROCESADO`: reservado para una etapa posterior de registro de pago.
+- `DESCARTADO`: descartado manualmente por `ADMIN`.
+
+Roles:
+
+- `USUARIO`: puede ver y subir solo sus propios comprobantes, si esta vinculado a una persona.
+- `ADMIN`: puede ver todos los comprobantes y descartarlos.
+- `LECTURA`: puede ver todos los comprobantes.
+
+La accion `Registrar pago` queda indicada como proxima etapa. No se crea ningun pago automaticamente desde un comprobante.
+
+Descartar un comprobante no borra el registro ni el archivo de Storage. Queda como trazabilidad. La bandeja principal muestra `PENDIENTE` por defecto; los comprobantes `DESCARTADO` pueden consultarse desde el filtro `Descartados` o desde `Todos`.
 
 ## Gestión router / MAC
 
@@ -178,9 +206,9 @@ Los teléfonos deben cargarse en formato internacional, sin símbolos. Ejemplo p
 5493511234567
 ```
 
-## Prueba tecnica: recibir comprobantes desde Android
+## Recibir comprobantes desde Android
 
-La app incluye una prueba tecnica para recibir comprobantes compartidos desde Android usando Web Share Target.
+La app puede recibir comprobantes compartidos desde Android usando Web Share Target.
 
 Requisitos:
 
@@ -194,11 +222,13 @@ Flujo esperado:
 2. Tocar Compartir.
 3. Elegir `Starlink ACC`.
 4. La app abre `share-target.html`.
-5. La pantalla muestra nombre, tipo, tamano y fecha de recepcion.
-6. Si es imagen, muestra vista previa.
-7. Si es PDF, informa que el PDF fue recibido.
+5. La pantalla exige sesion iniciada y usuario vinculado a una persona.
+6. La pantalla muestra nombre, tipo, tamano y fecha de recepcion.
+7. Completar mes, monto informado y observaciones si corresponde.
+8. Tocar `Enviar comprobante`.
+9. El comprobante queda `PENDIENTE` para revision administrativa.
 
-Esta prueba solo verifica recepcion del archivo. No registra pagos, no sube archivos a Supabase y no reemplaza todavia la carga manual.
+Este flujo no registra pagos automaticamente.
 
 ## Instalacion PWA en Android
 

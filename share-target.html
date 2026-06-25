@@ -6,20 +6,31 @@
     <title>Comprobante recibido - Starlink ACC</title>
     <link rel="manifest" href="./manifest.webmanifest">
     <link rel="stylesheet" href="./css/styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   </head>
   <body>
     <main class="share-page">
       <section class="panel">
-        <p class="eyebrow">Prueba tecnica</p>
+        <p class="eyebrow">Comprobantes</p>
         <h1>Comprobante recibido</h1>
-        <p class="muted">Prueba tecnica de recepcion de comprobantes</p>
-        <p class="notice" data-type="ok">
-          Prueba tecnica: el archivo fue recibido por la app. Todavia no se registra ningun pago.
-        </p>
+        <p class="muted">El comprobante se guarda como pendiente. No registra pagos automaticamente.</p>
 
         <div id="share-status" class="share-status">Buscando comprobante recibido...</div>
         <div id="share-file" class="share-file"></div>
         <div id="share-preview" class="share-preview"></div>
+
+        <form id="share-form" class="grid-form upload-form" hidden>
+          <label>Mes aplicado
+            <input type="month" id="share-mes" name="mes_aplicado" required>
+          </label>
+          <label>Monto informado
+            <input type="number" id="share-monto" name="monto_informado" min="0" step="0.01" placeholder="0.00">
+          </label>
+          <label class="wide">Observaciones
+            <textarea id="share-observaciones" name="observaciones" rows="2" placeholder="Datos opcionales para administracion"></textarea>
+          </label>
+          <button type="submit" class="primary">Enviar comprobante</button>
+        </form>
 
         <div class="form-actions">
           <button type="button" class="primary" id="volver-app">Volver a la app</button>
