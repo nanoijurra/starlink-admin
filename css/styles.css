@@ -234,6 +234,17 @@ main {
   width: auto;
 }
 
+.compact-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+}
+
+.compact-check input {
+  width: auto;
+}
+
 .form-actions,
 .toolbar,
 .filters,
@@ -256,6 +267,98 @@ main {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
+}
+
+.account-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 14px 0 22px;
+}
+
+.account-status-card {
+  border: 1px solid var(--line);
+  border-left-width: 6px;
+  border-radius: 8px;
+  background: #fff;
+  padding: 16px;
+  margin-bottom: 18px;
+}
+
+.account-status-card > span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.account-status-card > strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 1.9rem;
+  line-height: 1.05;
+}
+
+.account-status-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.account-status-values b {
+  color: var(--text);
+}
+
+.account-status-ok {
+  border-left-color: var(--ok);
+  background: #edf8f1;
+}
+
+.account-status-ok > strong {
+  color: var(--ok);
+}
+
+.account-status-credit {
+  border-left-color: #0b7285;
+  background: #e7f5ff;
+}
+
+.account-status-credit > strong {
+  color: #0b7285;
+}
+
+.account-status-due {
+  border-left-color: var(--danger);
+  background: #fff1f0;
+}
+
+.account-status-due > strong {
+  color: var(--danger);
+}
+
+.account-status-partial {
+  border-left-color: #d8a20f;
+  background: #fff9e6;
+}
+
+.account-status-partial > strong {
+  color: #664d03;
+}
+
+.account-status-empty {
+  border-left-color: #9aa6af;
+  background: #f8fafb;
+}
+
+.account-status-empty > strong {
+  color: var(--muted);
+}
+
+.view h3 {
+  margin: 18px 0 10px;
 }
 
 .metric {
@@ -626,6 +729,7 @@ th {
 
   .grid-form,
   .metric-grid,
+  .account-grid,
   .router-summary,
   .router-grid {
     grid-template-columns: 1fr;

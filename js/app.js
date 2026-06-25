@@ -1,4 +1,4 @@
-import { createSupabaseClient, getProfile, getSession, signIn, signOut } from './auth.js';
+import { createSupabaseClient, ensureUserProfile, getSession, signIn, signOut, signUp } from './auth.js';
 import {
   calcularCargosMensuales,
   calcularMoras,
@@ -33,11 +33,16 @@ const state = {
   pagos: [],
   cierres: [],
   cargos: [],
+  profiles: [],
   calculo: null
 };
 
 function isAdmin() {
   return state.profile?.rol === 'ADMIN';
+}
+
+function isUsuario() {
+  return state.profile?.rol === 'USUARIO';
 }
 
 function setLoading(message) {
@@ -97,6 +102,22 @@ function setSection(sectionId) {
 
 function applyAccess() {
   const readonly = !isAdmin();
+  const role = state.profile?.rol;
+  const allowedSections = role === 'USUARIO'
+    ? ['mi-cuenta']
+    : role === 'ADMIN'
+      ? ['dashboard', 'config', 'usuarios', 'personas', 'pagos', 'calculo', 'mensajes', 'router', 'moras', 'exportacion']
+      : ['dashboard', 'config', 'personas', 'pagos', 'calculo', 'mensajes', 'router', 'moras', 'exportacion'];
+
+  document.querySelectorAll('.tabs button').forEach((button) => {
+    const allowed = allowedSections.includes(button.dataset.section);
+    button.hidden = !allowed;
+    button.disabled = !allowed;
+  });
+  document.querySelectorAll('.view').forEach((view) => {
+    view.hidden = !allowedSections.includes(view.id);
+  });
+
   document.querySelectorAll('.admin-only').forEach((node) => {
     node.hidden = readonly;
     node.querySelectorAll?.('input, select, textarea, button').forEach((field) => {
@@ -109,6 +130,11 @@ function applyAccess() {
 
   byId('session-label').textContent = `${state.profile.email} - ${state.profile.rol}`;
   byId('session-box').hidden = false;
+
+  const activeSection = document.querySelector('.view.active')?.id;
+  if (!allowedSections.includes(activeSection)) {
+    setSection(allowedSections[0]);
+  }
 }
 
 async function loadTable(name, query = '*') {
@@ -119,15 +145,16 @@ async function loadTable(name, query = '*') {
 
 async function loadData() {
   setLoading('Cargando datos...');
-  const [configs, personas, pagos, cierres, cargos] = await Promise.all([
+  const [configs, personas, pagos, cierres, cargos, profiles] = await Promise.all([
     state.supabase.from('app_config').select('*').order('updated_at', { ascending: false }).limit(1),
     state.supabase.from('personas').select('*').order('nombre'),
     state.supabase.from('pagos').select('*').order('fecha_pago', { ascending: false }),
     state.supabase.from('cierres_mensuales').select('*').order('mes', { ascending: false }),
-    state.supabase.from('cargos_mensuales').select('*').order('mes', { ascending: false })
+    state.supabase.from('cargos_mensuales').select('*').order('mes', { ascending: false }),
+    state.supabase.from('profiles').select('*').order('email')
   ]);
 
-  for (const result of [configs, personas, pagos, cierres, cargos]) {
+  for (const result of [configs, personas, pagos, cierres, cargos, profiles]) {
     if (result.error) throw result.error;
   }
 
@@ -136,6 +163,7 @@ async function loadData() {
   state.pagos = pagos.data || [];
   state.cierres = cierres.data || [];
   state.cargos = cargos.data || [];
+  state.profiles = profiles.data || [];
 
   renderAll();
   showNotice('', 'info');
@@ -144,6 +172,8 @@ async function loadData() {
 function renderAll() {
   applyAccess();
   renderConfig();
+  renderUsuarios();
+  renderMiCuenta();
   renderDashboard();
   renderPersonas();
   renderPagos();
@@ -194,6 +224,172 @@ function renderConfig() {
   ]) {
     form.elements[field].value = state.config[field] ?? '';
   }
+}
+
+function profilePersona(profile) {
+  return state.personas.find((persona) => mismaPersona(persona.id, profile.persona_id)) || null;
+}
+
+function roleOptions(selected) {
+  return ['ADMIN', 'LECTURA', 'USUARIO']
+    .map((rol) => `<option value="${rol}" ${rol === selected ? 'selected' : ''}>${rol}</option>`)
+    .join('');
+}
+
+function personaLinkOptions(selected = '') {
+  const options = state.personas
+    .slice()
+    .sort((a, b) => a.nombre.localeCompare(b.nombre))
+    .map((persona) => `<option value="${escapeHtml(persona.id)}" ${mismaPersona(persona.id, selected) ? 'selected' : ''}>${escapeHtml(persona.nombre)}</option>`);
+  return `<option value="">Sin vincular</option>${options.join('')}`;
+}
+
+function renderUsuarios() {
+  const container = byId('usuarios-table');
+  if (!container) return;
+  if (!isAdmin()) {
+    container.innerHTML = '';
+    return;
+  }
+
+  const rows = state.profiles.map((profile) => {
+    const persona = profilePersona(profile);
+    return `
+      <tr>
+        <td>${escapeHtml(profile.email || '')}</td>
+        <td>
+          <select data-user-role="${escapeHtml(profile.id)}">
+            ${roleOptions(profile.rol)}
+          </select>
+        </td>
+        <td>
+          <label class="check compact-check">
+            <input type="checkbox" data-user-active="${escapeHtml(profile.id)}" ${profile.activo ? 'checked' : ''}>
+            Activo
+          </label>
+        </td>
+        <td>
+          <select data-user-persona="${escapeHtml(profile.id)}">
+            ${personaLinkOptions(profile.persona_id || '')}
+          </select>
+          <div class="muted">${escapeHtml(persona?.dependencia || '')}</div>
+        </td>
+        <td class="actions">
+          <button type="button" data-user-unlink="${escapeHtml(profile.id)}">Desvincular</button>
+        </td>
+      </tr>
+    `;
+  });
+
+  container.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Email</th>
+          <th>Rol</th>
+          <th>Activo</th>
+          <th>Persona vinculada</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>${rows.join('') || '<tr><td colspan="5">Sin usuarios cargados.</td></tr>'}</tbody>
+    </table>
+  `;
+}
+
+function renderMiCuenta() {
+  const container = byId('mi-cuenta-content');
+  if (!container) return;
+
+  if (!isUsuario()) {
+    container.innerHTML = '<p class="muted">Vista disponible para usuarios vinculados a una persona.</p>';
+    return;
+  }
+
+  if (!state.profile?.persona_id) {
+    container.innerHTML = '<p class="notice" data-type="info">Tu cuenta esta pendiente de vinculacion con una persona. Avisa al administrador.</p>';
+    return;
+  }
+
+  const persona = state.personas.find((item) => mismaPersona(item.id, state.profile.persona_id));
+  if (!persona) {
+    container.innerHTML = '<p class="notice" data-type="info">Tu cuenta esta pendiente de vinculacion con una persona. Avisa al administrador.</p>';
+    return;
+  }
+
+  const mes = byId('mi-cuenta-mes').value || currentMonth();
+  const cargo = state.cargos
+    .filter((item) => item.mes === mes && mismaPersona(item.persona_id, persona.id) && cargoEsVigente(item))
+    .map(cargoConPersona)[0] || null;
+  const pagos = state.pagos
+    .filter((pago) => mismaPersona(pago.persona_id, persona.id))
+    .sort((a, b) => `${b.fecha_pago}${b.created_at || ''}`.localeCompare(`${a.fecha_pago}${a.created_at || ''}`));
+  const cuenta = cargo ? estadoCuentaCargo(cargo) : estadoCuentaDesdePagos(persona.id, mes);
+  const cuentaResumen = cuenta;
+  const observacionCuenta = cargo ? observacionEstadoCuenta(cargo, cuenta) : cuenta.observacion;
+  const estadoResumen = cuentaResumen.estado.toUpperCase();
+  const mesCuenta = formatMesCuenta(mes);
+  const statusClass = cuentaStatusClass(cuentaResumen.estado);
+
+  const pagosRows = pagos.map((pago) => `
+    <tr>
+      <td>${escapeHtml(pago.fecha_pago || '')}</td>
+      <td>${escapeHtml(pago.mes_aplicado || '')}</td>
+      <td><span class="badge">${escapeHtml(pago.concepto || '')}</span></td>
+      <td class="number">${formatARS(pago.monto || 0)}</td>
+      <td>${escapeHtml(pago.observaciones || '')}</td>
+    </tr>
+  `);
+
+  container.innerHTML = `
+    <article class="account-status-card ${statusClass}">
+      <span>Estado de cuenta al ${escapeHtml(mesCuenta)}</span>
+      <strong>${escapeHtml(estadoResumen)}</strong>
+      <div class="account-status-values">
+        <span>Total del mes: <b>${formatARS(cuentaResumen.totalDelMes)}</b></span>
+        <span>Pagado: <b>${formatARS(cuentaResumen.pagado)}</b></span>
+        ${cuentaResumen.saldoAFavor > 0.01 ? `<span>Saldo a favor: <b>${formatARSNegativoVisual(cuentaResumen.saldoAFavor)}</b></span>` : ''}
+        <span>Pendiente hoy: <b>${formatARS(cuentaResumen.pendiente)}</b></span>
+      </div>
+    </article>
+
+    <div class="account-grid">
+      <article class="metric"><span>Nombre</span><strong>${escapeHtml(persona.nombre || '')}</strong></article>
+      <article class="metric"><span>Dependencia</span><strong>${escapeHtml(persona.dependencia || '-')}</strong></article>
+      <article class="metric"><span>Estado</span><strong>${escapeHtml(persona.estado || '-')}</strong></article>
+      <article class="metric"><span>Router</span><strong>${escapeHtml(persona.router_estado || '-')}</strong></article>
+      <article class="metric"><span>Telefono WhatsApp</span><strong>${escapeHtml(persona.telefono_whatsapp || '-')}</strong></article>
+      <article class="metric"><span>MAC 1 / MAC 2</span><strong>${escapeHtml([persona.mac_1 || persona.mac, persona.mac_2].filter(Boolean).join(' / ') || '-')}</strong></article>
+    </div>
+
+    <h3>Detalle del mes ${escapeHtml(mesCuenta)}</h3>
+    <div class="account-grid">
+      <article class="metric"><span>Equipo del mes</span><strong>${formatARS(cuenta.equipoDelMes)}</strong></article>
+      <article class="metric"><span>Abono del mes</span><strong>${formatARS(cuenta.abonoDelMes)}</strong></article>
+      <article class="metric"><span>Total del mes</span><strong>${formatARS(cuenta.totalDelMes)}</strong></article>
+      <article class="metric"><span>Pagado</span><strong>${formatARS(cuenta.pagado)}</strong></article>
+      <article class="metric"><span>Ajuste / saldo a favor</span><strong class="${cuenta.saldoAFavor > 0.01 ? 'saldo-favor' : 'valor-cero'}">${formatARSNegativoVisual(cuenta.saldoAFavor)}</strong></article>
+      <article class="metric"><span>Pendiente hoy</span><strong class="${cuenta.pendiente <= 0.01 ? 'pending-ok' : 'pending-due'}">${formatARS(cuenta.pendiente)}</strong></article>
+      <article class="metric"><span>Estado</span><strong>${escapeHtml(cuenta.estado)}</strong></article>
+    </div>
+    <p class="muted">${escapeHtml(observacionCuenta)}</p>
+
+    <h3>Mis pagos</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Mes</th>
+            <th>Concepto</th>
+            <th>Monto</th>
+            <th>Observaciones</th>
+          </tr>
+        </thead>
+        <tbody>${pagosRows.join('') || '<tr><td colspan="5">Sin pagos registrados.</td></tr>'}</tbody>
+      </table>
+    </div>
+  `;
 }
 
 function renderPersonas() {
@@ -358,6 +554,18 @@ function formatARSNegativoVisual(value) {
   return amount > 0 ? `-${formatARS(amount)}` : formatARS(0);
 }
 
+function formatMesCuenta(mes) {
+  return String(mes || currentMonth()).replace('-', '/');
+}
+
+function cuentaStatusClass(estado) {
+  if (estado === 'Al día') return 'account-status-ok';
+  if (estado === 'Saldo a favor') return 'account-status-credit';
+  if (estado === 'Parcial') return 'account-status-partial';
+  if (estado === 'Pendiente') return 'account-status-due';
+  return 'account-status-empty';
+}
+
 function observacionCargo(cargo) {
   const partes = [];
 
@@ -451,6 +659,51 @@ function observacionEstadoCuenta(cargo, cuenta) {
     return `${base}. Pendiente de pago`;
   }
   return 'Sin cargo del mes';
+}
+
+function estadoCuentaDesdePagos(personaId, mes) {
+  const pagadoEquipoMes = pagosPersonaMesConceptos(personaId, mes, ['COMPRA_INICIAL', 'REGULARIZACION']);
+  const pagadoAbonoMes = pagosPersonaMes(personaId, mes, 'ABONO');
+  const totalAjuste = pagosPersonaMes(personaId, mes, 'AJUSTE');
+  const pagadoSinAjuste = round2(pagadoEquipoMes + pagadoAbonoMes);
+  const pagado = round2(pagadoSinAjuste + totalAjuste);
+  const tienePagos = pagado > 0.01;
+  const estado = !tienePagos
+    ? 'Sin cargo'
+    : totalAjuste > 0.01
+      ? 'Saldo a favor'
+      : 'Al día';
+  const observaciones = [];
+
+  if (!tienePagos) {
+    observaciones.push('No hay cargo mensual guardado para este mes.');
+  } else if (pagadoEquipoMes > 0.01 && pagadoAbonoMes > 0.01) {
+    observaciones.push('Compra inicial / regularizacion + abono registrados.');
+  } else if (pagadoEquipoMes > 0.01) {
+    observaciones.push('Pago de equipo registrado.');
+  } else if (pagadoAbonoMes > 0.01) {
+    observaciones.push('Cuota mensual registrada.');
+  } else {
+    observaciones.push('Estado calculado segun pagos registrados del mes.');
+  }
+
+  if (totalAjuste > 0.01) {
+    observaciones.push('Saldo a favor registrado.');
+  }
+
+  return {
+    pagadoEquipoMes,
+    pagadoAbonoMes,
+    equipoDelMes: pagadoEquipoMes,
+    abonoDelMes: pagadoAbonoMes,
+    totalDelMes: pagadoSinAjuste,
+    pagado,
+    totalAjuste,
+    pendiente: 0,
+    saldoAFavor: totalAjuste > 0.01 ? totalAjuste : 0,
+    estado,
+    observacion: observaciones.join(' ')
+  };
 }
 
 function calculoGuardadoVisible(mes) {
@@ -713,7 +966,7 @@ function renderMoras() {
 
 async function bootAuthenticated(session) {
   state.session = session;
-  state.profile = await getProfile(state.supabase, session.user.id);
+  state.profile = await ensureUserProfile(state.supabase, session.user);
   byId('login-section').hidden = true;
   byId('app-shell').hidden = false;
   await loadData();
@@ -721,6 +974,7 @@ async function bootAuthenticated(session) {
 
 async function boot() {
   byId('dashboard-mes').value = currentMonth();
+  byId('mi-cuenta-mes').value = currentMonth();
   byId('calculo-mes').value = currentMonth();
   byId('mensajes-mes').value = currentMonth();
   byId('router-mes').value = currentMonth();
@@ -755,6 +1009,22 @@ function bindEvents() {
     }
   });
 
+  byId('signup-btn').addEventListener('click', async () => {
+    try {
+      setLoading('Creando cuenta...');
+      const { email, password } = formToObject(byId('login-form'));
+      const { user, session } = await signUp(state.supabase, email, password);
+      if (session && user) {
+        await bootAuthenticated(session);
+        setOk('Cuenta creada. Quedo pendiente de vinculacion del administrador.');
+        return;
+      }
+      setOk('Cuenta creada. Revisa tu email o espera activacion/vinculacion del administrador.');
+    } catch (error) {
+      setError(error);
+    }
+  });
+
   byId('logout-btn').addEventListener('click', async () => {
     try {
       await signOut(state.supabase);
@@ -769,6 +1039,7 @@ function bindEvents() {
   });
 
   byId('dashboard-mes').addEventListener('change', renderDashboard);
+  byId('mi-cuenta-mes').addEventListener('change', renderMiCuenta);
   byId('router-mes').addEventListener('change', renderRouter);
   byId('filtro-pago-persona').addEventListener('change', renderPagos);
   byId('filtro-pago-mes').addEventListener('change', renderPagos);
@@ -778,6 +1049,8 @@ function bindEvents() {
   byId('persona-form').addEventListener('submit', savePersona);
   byId('persona-reset').addEventListener('click', resetPersonaForm);
   byId('personas-table').addEventListener('click', handlePersonaAction);
+  byId('usuarios-table').addEventListener('change', handleUsuariosChange);
+  byId('usuarios-table').addEventListener('click', handleUsuariosClick);
   byId('pago-form').addEventListener('submit', savePago);
   byId('calcular-btn').addEventListener('click', calcularMes);
   byId('calculo-result').addEventListener('click', closeMonth);
@@ -918,6 +1191,48 @@ async function handlePersonaAction(event) {
       setError(error);
     }
   }
+}
+
+async function updateProfile(profileId, patch, okMessage) {
+  if (!isAdmin()) return setError('Tu rol permite lectura, no modificacion.');
+  try {
+    const { error } = await state.supabase
+      .from('profiles')
+      .update(patch)
+      .eq('id', profileId);
+    if (error) throw error;
+    await loadData();
+    setSection('usuarios');
+    setOk(okMessage);
+  } catch (error) {
+    setError(error);
+  }
+}
+
+async function handleUsuariosChange(event) {
+  const roleId = event.target.dataset.userRole;
+  const activeId = event.target.dataset.userActive;
+  const personaId = event.target.dataset.userPersona;
+
+  if (roleId) {
+    await updateProfile(roleId, { rol: event.target.value }, 'Rol actualizado.');
+    return;
+  }
+
+  if (activeId) {
+    await updateProfile(activeId, { activo: event.target.checked }, 'Estado de usuario actualizado.');
+    return;
+  }
+
+  if (personaId) {
+    await updateProfile(personaId, { persona_id: event.target.value || null }, 'Persona vinculada.');
+  }
+}
+
+async function handleUsuariosClick(event) {
+  const unlinkId = event.target.dataset.userUnlink;
+  if (!unlinkId) return;
+  await updateProfile(unlinkId, { persona_id: null }, 'Persona desvinculada.');
 }
 
 async function savePago(event) {

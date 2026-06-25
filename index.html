@@ -39,7 +39,10 @@
             Password
             <input type="password" name="password" autocomplete="current-password" required>
           </label>
-          <button type="submit" class="primary">Ingresar</button>
+          <div class="form-actions">
+            <button type="submit" class="primary">Ingresar</button>
+            <button type="button" id="signup-btn">Crear cuenta</button>
+          </div>
         </form>
         <p class="muted">El acceso esta limitado a usuarios con profile activo en Supabase.</p>
       </section>
@@ -47,7 +50,9 @@
       <section id="app-shell" hidden>
         <nav class="tabs" aria-label="Secciones">
           <button type="button" data-section="dashboard" class="active">Dashboard</button>
+          <button type="button" data-section="mi-cuenta">Mi cuenta</button>
           <button type="button" data-section="config">Configuracion</button>
+          <button type="button" data-section="usuarios">Usuarios</button>
           <button type="button" data-section="personas">Personas</button>
           <button type="button" data-section="pagos">Pagos</button>
           <button type="button" data-section="calculo">Calculo mensual</button>
@@ -63,6 +68,17 @@
             <label class="month-inline">Mes <input type="month" id="dashboard-mes"></label>
           </div>
           <div id="dashboard-cards" class="metric-grid"></div>
+        </section>
+
+        <section id="mi-cuenta" class="view">
+          <div class="section-title">
+            <div>
+              <h2>Mi cuenta</h2>
+              <p class="muted">Consulta personal de estado de cuenta y pagos.</p>
+            </div>
+            <label class="month-inline">Mes <input type="month" id="mi-cuenta-mes"></label>
+          </div>
+          <div id="mi-cuenta-content"></div>
         </section>
 
         <section id="config" class="view">
@@ -81,6 +97,14 @@
             <label>Metodo equilibrio <input type="text" name="metodo_equilibrio" value="RAPIDO" readonly></label>
             <button type="submit" class="primary admin-only">Guardar configuracion</button>
           </form>
+        </section>
+
+        <section id="usuarios" class="view admin-only">
+          <div class="section-title">
+            <h2>Usuarios</h2>
+            <p class="muted">Roles y vinculacion de usuarios con personas.</p>
+          </div>
+          <div id="usuarios-table" class="table-wrap"></div>
         </section>
 
         <section id="personas" class="view">

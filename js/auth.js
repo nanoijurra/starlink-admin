@@ -23,6 +23,12 @@ export async function signIn(supabase, email, password) {
   return data;
 }
 
+export async function signUp(supabase, email, password) {
+  const { data, error } = await supabase.auth.signUp({ email, password });
+  if (error) throw error;
+  return data;
+}
+
 export async function signOut(supabase) {
   const { error } = await supabase.auth.signOut();
   if (error) throw error;
@@ -39,12 +45,44 @@ export async function getProfile(supabase, userId) {
     .from('profiles')
     .select('*')
     .eq('id', userId)
-    .eq('activo', true)
     .maybeSingle();
 
   if (error) throw error;
   if (!data) {
-    throw new Error('El usuario no tiene profile activo. Crea el profile con rol ADMIN o LECTURA.');
+    throw new Error('El usuario no tiene profile. Crea el profile o registra la cuenta como USUARIO.');
+  }
+  if (!data.activo) {
+    throw new Error('El profile del usuario no esta activo.');
   }
   return data;
+}
+
+export async function ensureUserProfile(supabase, user) {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (data) {
+    if (!data.activo) throw new Error('El profile del usuario no esta activo.');
+    return data;
+  }
+
+  const payload = {
+    id: user.id,
+    email: user.email,
+    rol: 'USUARIO',
+    activo: true,
+    persona_id: null
+  };
+  const { data: created, error: insertError } = await supabase
+    .from('profiles')
+    .insert(payload)
+    .select('*')
+    .single();
+
+  if (insertError) throw insertError;
+  return created;
 }

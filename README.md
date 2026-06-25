@@ -21,7 +21,7 @@ La versión funcional actual incluye:
 - WhatsApp manual asistido.
 - MAC 1 / MAC 2.
 - Gestión manual del router/MAC.
-- Roles `ADMIN` y `LECTURA`.
+- Roles `ADMIN`, `LECTURA` y `USUARIO`.
 
 Aclaraciones importantes:
 
@@ -58,6 +58,7 @@ Roles:
 
 - `ADMIN`: puede operar y modificar datos según las políticas RLS.
 - `LECTURA`: puede consultar, pero no debería modificar datos.
+- `USUARIO`: puede ver solo su propia cuenta cuando esta vinculado a una persona.
 
 Nunca usar `service_role` en el frontend. `js/supabaseClient.js` debe usar solo la URL del proyecto y la publishable/anon key pública.
 
@@ -72,6 +73,7 @@ Ejecutar en Supabase SQL Editor en este orden:
 5. `sql/004_migracion_componentes_cargos.sql`
 6. `sql/005_migracion_contacto_mac.sql`
 7. `sql/006_migracion_estado_router.sql`
+8. `sql/007_migracion_usuarios_personas.sql`
 
 Nota: hay dos migraciones con numeración `004`. Es una numeración repetida; no impide ejecutar la base si se corren ambas antes de `005` y `006`.
 
@@ -126,6 +128,24 @@ Conceptos reales guardados:
 La opción `Pago completo del mes` es solo visual para facilitar la carga. No se guarda como concepto real: se descompone en los conceptos reales que correspondan según el cargo mensual.
 
 Si el pago informado supera el total del cargo mensual, el excedente se registra automáticamente como `AJUSTE` con observación de pago excedente.
+
+## Usuarios vinculados a personas
+
+La app admite usuarios comunes con rol `USUARIO`.
+
+- `ADMIN` gestiona usuarios, roles, estado activo y vinculacion con personas.
+- `LECTURA` ve informacion general sin modificar datos.
+- `USUARIO` ve solo su propia cuenta.
+
+Los usuarios comunes se registran con email y password desde la pantalla de login. Al registrarse quedan como `USUARIO`, activos y sin persona vinculada.
+
+El administrador debe vincular cada usuario con una persona existente en `personas`. Hasta estar vinculado, el usuario ve:
+
+```text
+Tu cuenta esta pendiente de vinculacion con una persona. Avisa al administrador.
+```
+
+Esta etapa no permite a usuarios comunes registrar pagos, editar MAC/router ni subir comprobantes automaticamente.
 
 ## Gestión router / MAC
 
