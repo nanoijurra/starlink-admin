@@ -180,6 +180,32 @@ Flujo esperado:
 
 Esta prueba solo verifica recepcion del archivo. No registra pagos, no sube archivos a Supabase y no reemplaza todavia la carga manual.
 
+## Instalacion PWA en Android
+
+Para que Chrome Android ofrezca instalar la app:
+
+1. Publicar la app por HTTPS en GitHub Pages.
+2. Abrir la URL publica desde Chrome Android.
+3. Usar menu de Chrome -> Instalar app o Agregar a pantalla principal.
+4. Instalar la PWA.
+5. Despues de instalar, probar compartir un comprobante hacia `Starlink ACC`.
+
+Si no aparece la opcion de instalar, revisar:
+
+- `manifest.webmanifest` valido.
+- `service-worker.js` registrado sin errores.
+- Iconos PNG `192x192` y `512x512`.
+- Rutas relativas, por ejemplo `./manifest.webmanifest`, `./service-worker.js` y `./icons/icon-192.png`.
+- Publicacion por HTTPS.
+- Cache limpia o PWA previa desinstalada.
+
+Para limpiar una prueba anterior en Android:
+
+1. Desinstalar la PWA desde el icono o desde ajustes de Chrome.
+2. En Chrome, borrar cache del sitio publicado.
+3. Volver a abrir la URL publica.
+4. Esperar unos segundos y volver a intentar Instalar app.
+
 ## Pruebas manuales
 
 Levantar servidor local desde la carpeta del proyecto:

@@ -16,7 +16,10 @@ self.addEventListener('fetch', (event) => {
     requestUrl.origin === self.location.origin &&
     requestUrl.pathname.endsWith('/share-target.html');
 
-  if (!isShareTarget) return;
+  if (!isShareTarget) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
 
   event.respondWith(handleShareTarget(event.request));
 });
