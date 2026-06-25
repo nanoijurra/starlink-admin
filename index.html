@@ -232,13 +232,29 @@
 
         <section id="exportacion" class="view">
           <div class="section-title">
-            <h2>Exportacion</h2>
-            <p class="muted">Descarga de datos visibles en CSV.</p>
+            <div>
+              <h2>Exportacion</h2>
+              <p class="muted">Descarga de datos visibles en CSV.</p>
+            </div>
+            <label class="month-inline">Mes <input type="month" id="export-mes"></label>
           </div>
-          <div class="export-actions">
-            <button type="button" id="export-personas">Personas CSV</button>
-            <button type="button" id="export-pagos">Pagos CSV</button>
-            <button type="button" id="export-cargos">Cargos CSV</button>
+          <div class="export-groups">
+            <section>
+              <h3>Exportaciones mensuales</h3>
+              <div class="export-actions">
+                <button type="button" id="export-backup-mensual">Backup mensual CSV</button>
+                <button type="button" id="export-pagos-mes">Pagos del mes CSV</button>
+                <button type="button" id="export-comprobantes-mes">Comprobantes del mes CSV</button>
+              </div>
+            </section>
+            <section>
+              <h3>Exportaciones generales</h3>
+              <div class="export-actions">
+                <button type="button" id="export-personas">Personas CSV</button>
+                <button type="button" id="export-pagos">Pagos CSV</button>
+                <button type="button" id="export-cargos">Cargos CSV</button>
+              </div>
+            </section>
           </div>
         </section>
       </section>

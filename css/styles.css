@@ -263,6 +263,22 @@ main {
   min-width: 170px;
 }
 
+.export-groups {
+  display: grid;
+  gap: 18px;
+}
+
+.export-groups section {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 14px;
+}
+
+.export-groups h3 {
+  margin: 0 0 10px;
+}
+
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

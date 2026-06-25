@@ -123,6 +123,10 @@ http://localhost:8000
 
 El panel no registra pagos, no modifica comprobantes y no cambia el router. Solo muestra indicadores, listas de acciones sugeridas y accesos internos a las secciones existentes.
 
+## Exportación
+
+La sección `Exportación` contiene solo descargas CSV. Además de exportaciones generales de personas, pagos y cargos, permite generar un backup operativo mensual con una fila por persona activa, pagos del mes y comprobantes del mes. Estas exportaciones son solo lectura y usan el mes seleccionado en la sección.
+
 ## Pagos
 
 Conceptos reales guardados:

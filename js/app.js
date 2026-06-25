@@ -1489,6 +1489,7 @@ async function boot() {
   byId('mensajes-mes').value = currentMonth();
   byId('router-mes').value = currentMonth();
   byId('filtro-pago-mes').value = currentMonth();
+  byId('export-mes').value = currentMonth();
   byId('pago-form').elements.fecha_pago.value = new Date().toISOString().slice(0, 10);
   byId('pago-form').elements.mes_aplicado.value = currentMonth();
 
@@ -1573,6 +1574,9 @@ function bindEvents() {
   byId('mensajes-list').addEventListener('click', copyMessage);
   byId('router-list').addEventListener('click', handleRouterAction);
   byId('export-pagos-filtrados').addEventListener('click', () => exportPagos(pagosFiltrados(), 'pagos-filtrados.csv'));
+  byId('export-backup-mensual').addEventListener('click', exportBackupMensual);
+  byId('export-pagos-mes').addEventListener('click', exportPagosMes);
+  byId('export-comprobantes-mes').addEventListener('click', exportComprobantesMes);
   byId('export-personas').addEventListener('click', exportPersonas);
   byId('export-pagos').addEventListener('click', () => exportPagos(state.pagos, 'pagos.csv'));
   byId('export-cargos').addEventListener('click', exportCargos);
@@ -2380,6 +2384,122 @@ function exportPersonas() {
       persona.router_estado,
       persona.observaciones
     ])
+  ]);
+}
+
+function exportMonth() {
+  return byId('export-mes')?.value
+    || byId('panel-mes')?.value
+    || byId('dashboard-mes')?.value
+    || currentMonth();
+}
+
+function comprobantesPersonaMes(personaId, mes) {
+  return state.comprobantes.filter((comprobante) => (
+    mismaPersona(comprobante.persona_id, personaId) &&
+    comprobante.mes_aplicado === mes
+  ));
+}
+
+function comprobantesEstadoCantidad(comprobantes, estado) {
+  return comprobantes.filter((comprobante) => (comprobante.estado || 'PENDIENTE') === estado).length;
+}
+
+function exportBackupMensual() {
+  const mes = exportMonth();
+  const personasActivas = state.personas
+    .filter((persona) => persona.estado === 'ACTIVO')
+    .sort((a, b) => a.nombre.localeCompare(b.nombre));
+
+  downloadCsv(`backup-mensual-${mes}.csv`, [
+    [
+      'mes',
+      'persona',
+      'dependencia',
+      'estado_persona',
+      'router_estado',
+      'telefono_whatsapp',
+      'mac_1',
+      'mac_2',
+      'total_mes',
+      'pagado',
+      'pendiente_hoy',
+      'estado_cuenta',
+      'saldo_a_favor',
+      'pagos_mes',
+      'comprobantes_pendientes',
+      'comprobantes_procesados',
+      'comprobantes_descartados'
+    ],
+    ...personasActivas.map((persona) => {
+      const cargo = buscarCargoAsociado(persona.id, mes);
+      const cuenta = cargo ? estadoCuentaCargo(cargo) : estadoCuentaDesdePagos(persona.id, mes);
+      const pagosMes = pagosExistentesPersonaMes(persona.id, mes);
+      const comprobantes = comprobantesPersonaMes(persona.id, mes);
+      return [
+        mes,
+        persona.nombre,
+        persona.dependencia,
+        persona.estado,
+        persona.router_estado,
+        persona.telefono_whatsapp,
+        persona.mac_1 || persona.mac,
+        persona.mac_2,
+        cuenta.totalDelMes,
+        cuenta.pagado,
+        cuenta.pendiente,
+        cuenta.estado,
+        cuenta.saldoAFavor,
+        pagosMes.length,
+        comprobantesEstadoCantidad(comprobantes, 'PENDIENTE'),
+        comprobantesEstadoCantidad(comprobantes, 'PROCESADO'),
+        comprobantesEstadoCantidad(comprobantes, 'DESCARTADO')
+      ];
+    })
+  ]);
+}
+
+function exportPagosMes() {
+  const mes = exportMonth();
+  const personasPorId = new Map(state.personas.map((persona) => [String(persona.id), persona]));
+  const pagosMes = state.pagos.filter((pago) => pago.mes_aplicado === mes);
+  downloadCsv(`pagos-${mes}.csv`, [
+    ['fecha_pago', 'mes_aplicado', 'persona', 'concepto', 'monto', 'medio', 'observaciones'],
+    ...pagosMes.map((pago) => {
+      const persona = personasPorId.get(String(pago.persona_id));
+      return [
+        pago.fecha_pago,
+        pago.mes_aplicado,
+        persona?.nombre || '',
+        pago.concepto,
+        pago.monto,
+        pago.medio,
+        pago.observaciones
+      ];
+    })
+  ]);
+}
+
+function exportComprobantesMes() {
+  const mes = exportMonth();
+  const personasPorId = new Map(state.personas.map((persona) => [String(persona.id), persona]));
+  const comprobantesMes = state.comprobantes.filter((comprobante) => comprobante.mes_aplicado === mes);
+  downloadCsv(`comprobantes-${mes}.csv`, [
+    ['fecha_carga', 'mes_aplicado', 'persona', 'monto_informado', 'estado', 'archivo_nombre', 'archivo_tipo', 'observaciones', 'revisado_at'],
+    ...comprobantesMes.map((comprobante) => {
+      const persona = personasPorId.get(String(comprobante.persona_id));
+      return [
+        comprobante.created_at,
+        comprobante.mes_aplicado,
+        persona?.nombre || '',
+        comprobante.monto_informado,
+        comprobante.estado,
+        comprobante.archivo_nombre,
+        comprobante.archivo_tipo,
+        comprobante.observaciones,
+        comprobante.revisado_at
+      ];
+    })
   ]);
 }
 
