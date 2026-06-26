@@ -1,32 +1,32 @@
-# Starlink Admin ACC Córdoba
+# Starlink Admin ACC Cordoba
 
-App web simple para administrar pagos compartidos del servicio Starlink, personas, pagos, mensajes de cobro, MACs y gestión manual del router.
+App web simple para administrar pagos compartidos del servicio Starlink, personas, pagos, mensajes de cobro, MACs y gestion manual del router.
 
-Usa HTML, CSS y JavaScript vanilla con Supabase como base de datos online y autenticación. No usa backend propio, React, Vite ni Node obligatorio para operar.
+Usa HTML, CSS y JavaScript vanilla con Supabase como base de datos online y autenticacion. No usa backend propio, React, Vite ni Node obligatorio para operar.
 
 ## Alcance v1
 
-La versión funcional actual incluye:
+La version funcional actual incluye:
 
-- Gestión de personas.
+- Gestion de personas.
 - Fundadores y usuarios posteriores.
-- Cálculo mensual.
+- Calculo mensual.
 - Compra inicial del equipo.
 - Abono mensual.
-- Regularización proporcional.
-- Saldo a favor / compensación.
+- Regularizacion proporcional.
+- Saldo a favor / compensacion.
 - Registro de pagos.
 - Mensajes de cobro.
 - Alias bancario.
 - WhatsApp manual asistido.
 - MAC 1 / MAC 2.
-- Gestión manual del router/MAC.
+- Gestion manual del router/MAC.
 - Roles `ADMIN`, `LECTURA` y `USUARIO`.
 
 Aclaraciones importantes:
 
-- La app no envía WhatsApp automáticamente.
-- La app no configura el router automáticamente.
+- La app no envia WhatsApp automaticamente.
+- La app no configura el router automaticamente.
 - La app no maneja dinero real: solo registra pagos informados.
 - La app no usa backend propio: usa Supabase.
 
@@ -34,13 +34,19 @@ Aclaraciones importantes:
 
 - `index.html`: estructura principal de la app y pantallas.
 - `css/`: estilos visuales.
-- `js/`: lógica de UI, cálculos, pagos, mensajes, autenticación y conexión Supabase.
+- `js/`: logica de UI, calculos, pagos, mensajes, autenticacion y conexion Supabase.
 - `sql/`: schema, RLS, seed y migraciones.
 - `tests/`: pruebas manuales ejecutables desde navegador.
+- `docs/`: documentacion operativa y changelog.
 
-## Configuración Supabase
+## Documentacion operativa
 
-La app usa Supabase Auth para iniciar sesión y tablas públicas protegidas por RLS.
+- [`docs/operacion_mensual.md`](docs/operacion_mensual.md): flujo mensual recomendado, roles, comprobantes, pagos, router/MAC, exportaciones y cierre operativo.
+- [`docs/changelog.md`](docs/changelog.md): resumen de cambios funcionales relevantes.
+
+## Configuracion Supabase
+
+La app usa Supabase Auth para iniciar sesion y tablas publicas protegidas por RLS.
 
 Tablas principales:
 
@@ -49,18 +55,18 @@ Tablas principales:
 - `pagos`: pagos informados por persona, mes y concepto.
 - `cierres_mensuales`: cierres mensuales.
 - `cargos_mensuales`: cargos calculados y persistidos por mes.
-- `app_config`: configuración operativa.
-- `audit_log`: auditoría.
+- `app_config`: configuracion operativa.
+- `audit_log`: auditoria.
 
-RLS está activo. Los usuarios deben estar autenticados y tener profile activo.
+RLS esta activo. Los usuarios deben estar autenticados y tener profile activo.
 
 Roles:
 
-- `ADMIN`: puede operar y modificar datos según las políticas RLS.
-- `LECTURA`: puede consultar, pero no debería modificar datos.
+- `ADMIN`: puede operar y modificar datos segun las politicas RLS.
+- `LECTURA`: puede consultar, pero no deberia modificar datos.
 - `USUARIO`: puede ver solo su propia cuenta cuando esta vinculado a una persona.
 
-Nunca usar `service_role` en el frontend. `js/supabaseClient.js` debe usar solo la URL del proyecto y la publishable/anon key pública.
+Nunca usar `service_role` en el frontend. `js/supabaseClient.js` debe usar solo la URL del proyecto y la publishable/anon key publica.
 
 ## Migraciones SQL
 
@@ -76,7 +82,7 @@ Ejecutar en Supabase SQL Editor en este orden:
 8. `sql/007_migracion_usuarios_personas.sql`
 9. `sql/008_migracion_comprobantes_pago.sql`
 
-Nota: hay dos migraciones con numeración `004`. Es una numeración repetida; no impide ejecutar la base si se corren ambas antes de `005` y `006`.
+Nota: hay dos migraciones con numeracion `004`. Es una numeracion repetida; no impide ejecutar la base si se corren ambas antes de `005` y `006`.
 
 ## Uso local
 
@@ -99,11 +105,11 @@ Abrir:
 http://localhost:8000
 ```
 
-## Publicación GitHub Pages
+## Publicacion GitHub Pages
 
 - Subir los cambios con git.
-- Configurar GitHub Pages para publicar desde `main` y la carpeta raíz del repositorio.
-- Abrir la URL pública de GitHub Pages.
+- Configurar GitHub Pages para publicar desde `main` y la carpeta raiz del repositorio.
+- Abrir la URL publica de GitHub Pages.
 - Si no se ven cambios, hacer `Ctrl+F5` para forzar recarga del navegador.
 
 ## Flujo operativo mensual
@@ -114,8 +120,8 @@ http://localhost:8000
 4. Generar mensajes de cobro.
 5. Enviar WhatsApp manualmente desde el enlace precargado.
 6. Registrar pagos informados.
-7. Revisar Gestión router / MAC.
-8. Marcar `HABILITADO` o `BLOQUEADO` según la acción real hecha en el router.
+7. Revisar Gestion router / MAC.
+8. Marcar `HABILITADO` o `BLOQUEADO` segun la accion real hecha en el router.
 
 ## Panel mensual
 
@@ -123,15 +129,25 @@ http://localhost:8000
 
 El panel no registra pagos, no modifica comprobantes y no cambia el router. Solo muestra indicadores, listas de acciones sugeridas y accesos internos a las secciones existentes.
 
-## Exportación
+## Exportacion
 
-La sección `Exportación` contiene solo descargas CSV. Además de exportaciones generales de personas, pagos y cargos, permite generar un backup operativo mensual con una fila por persona activa, pagos del mes y comprobantes del mes. Estas exportaciones son solo lectura y usan el mes seleccionado en la sección.
+La seccion `Exportacion` contiene solo descargas CSV. Ademas de exportaciones generales de personas, pagos y cargos, permite generar un backup operativo mensual con una fila por persona activa, pagos del mes y comprobantes del mes. Estas exportaciones son solo lectura y usan el mes seleccionado en la seccion.
 
 ## Checklist de cierre mensual
 
 `Cierre mensual` es una guia operativa de solo lectura para `ADMIN` y `LECTURA`. No cierra el mes de forma irreversible, no bloquea modificaciones, no registra pagos, no cambia comprobantes y no cambia router.
 
 Sirve para revisar comprobantes pendientes, pagos pendientes, pagos parciales, alertas de router, personas sin MAC, backup mensual y mensajes de cobro antes de considerar el mes cerrado operativamente.
+
+## Paquete de cierre mensual ZIP
+
+Desde `Cierre mensual`, `ADMIN` y `LECTURA` pueden generar `cierre_starlink_AAAA-MM.zip`.
+
+El paquete descarga un unico ZIP con respaldos CSV del mes: backup mensual, pagos, comprobantes, estado de cuenta, router/MAC, deudores, comprobantes pendientes, saldo a favor y personas. No modifica datos, no registra pagos, no cambia comprobantes, no toca router y no cierra el mes automaticamente.
+
+Puede generarse aunque existan deudores, comprobantes pendientes, pagos parciales o alertas router. Las exportaciones CSV individuales siguen disponibles en `Exportacion`.
+
+La generacion del ZIP usa una libreria local en `js/vendor/jszip.min.js`; no usa CDN externo.
 
 ## Pagos
 
@@ -142,9 +158,9 @@ Conceptos reales guardados:
 - `REGULARIZACION`
 - `AJUSTE`
 
-La opción `Pago completo del mes` es solo visual para facilitar la carga. No se guarda como concepto real: se descompone en los conceptos reales que correspondan según el cargo mensual.
+La opcion `Pago completo del mes` es solo visual para facilitar la carga. No se guarda como concepto real: se descompone en los conceptos reales que correspondan segun el cargo mensual.
 
-Si el pago informado supera el total del cargo mensual, el excedente se registra automáticamente como `AJUSTE` con observación de pago excedente.
+Si el pago informado supera el total del cargo mensual, el excedente se registra automaticamente como `AJUSTE` con observacion de pago excedente.
 
 ## Usuarios vinculados a personas
 
@@ -193,32 +209,32 @@ Descartar un comprobante no borra el registro ni el archivo de Storage. Queda co
 
 Desde la bandeja, `ADMIN` puede usar `Registrar pago` solo sobre comprobantes `PENDIENTE`. La app muestra persona, mes, monto, archivo, observaciones y pagos existentes del mismo mes para evitar duplicados. El administrador debe confirmar manualmente; recien entonces se registra como `Pago completo del mes`, se descompone en conceptos reales y el comprobante pasa a `PROCESADO` con los `pago_ids` asociados.
 
-## Gestión router / MAC
+## Gestion router / MAC
 
-`router_estado` es manual y representa lo que el administrador registró sobre el estado real en el router.
+`router_estado` es manual y representa lo que el administrador registro sobre el estado real en el router.
 
 Opciones:
 
 - `HABILITADO`
 - `BLOQUEADO`
 
-Prioridad de revisión:
+Prioridad de revision:
 
-1. Pagó y está bloqueado.
-2. No pagó y está habilitado.
-3. Pagó pero falta MAC.
-4. Pagó y está habilitado.
-5. No pagó y ya está bloqueado.
+1. Pago y esta bloqueado.
+2. No pago y esta habilitado.
+3. Pago pero falta MAC.
+4. Pago y esta habilitado.
+5. No pago y ya esta bloqueado.
 
-La app no toca el router automáticamente. Solo ayuda a priorizar acciones y registrar el estado manual.
+La app no toca el router automaticamente. Solo ayuda a priorizar acciones y registrar el estado manual.
 
 ## WhatsApp
 
 La app usa enlaces `wa.me` para abrir WhatsApp con el mensaje de cobro precargado.
 
-El usuario debe revisar el texto y tocar Enviar dentro de WhatsApp. No se envía automáticamente.
+El usuario debe revisar el texto y tocar Enviar dentro de WhatsApp. No se envia automaticamente.
 
-Los teléfonos deben cargarse en formato internacional, sin símbolos. Ejemplo para Argentina Córdoba:
+Los telefonos deben cargarse en formato internacional, sin simbolos. Ejemplo para Argentina Cordoba:
 
 ```text
 5493511234567
@@ -291,7 +307,7 @@ http://localhost:8000/tests/test_manual_calculos.html
 Resultado esperado:
 
 - Debe mostrar `PRUEBA OK`.
-- Valida método rápido, redondeo y suma de cargos.
+- Valida metodo rapido, redondeo y suma de cargos.
 
 Abrir:
 
@@ -302,26 +318,26 @@ http://localhost:8000/tests/test_manual_pagos.html
 Resultado esperado:
 
 - Debe mostrar `PRUEBA OK`.
-- Valida pago mixto, pago parcial, cargo sin regularización y rechazo de pago excedente.
+- Valida pago mixto, pago parcial, cargo sin regularizacion y rechazo de pago excedente.
 
-Estas pruebas deben ejecutarse después de modificar `js/calculos.js`, `js/pagos.js`, `js/utils.js` o la lógica de cierre/pagos en `js/app.js`.
+Estas pruebas deben ejecutarse despues de modificar `js/calculos.js`, `js/pagos.js`, `js/utils.js` o la logica de cierre/pagos en `js/app.js`.
 
 ## Seguridad
 
 - No subir ni copiar `service_role` al frontend.
 - El frontend debe usar solo publishable/anon key.
 - La seguridad de datos se apoya en RLS.
-- Usuarios anónimos no deben tener acceso.
-- Usuarios con rol `LECTURA` no deberían modificar datos.
-- Para desactivar usuarios o personas se usan estados o campos de estado, no borrado físico operativo.
+- Usuarios anonimos no deben tener acceso.
+- Usuarios con rol `LECTURA` no deberian modificar datos.
+- Para desactivar usuarios o personas se usan estados o campos de estado, no borrado fisico operativo.
 
 ## Estado v1 funcional
 
 v1 funcional validada:
 
-- Cálculo mensual validado.
+- Calculo mensual validado.
 - Pagos validados.
 - Mensajes validados.
 - WhatsApp manual asistido validado.
-- Gestión router/MAC validada.
-- Publicación online validada.
+- Gestion router/MAC validada.
+- Publicacion online validada.

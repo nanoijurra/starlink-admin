@@ -31,8 +31,12 @@ function csvEscape(value) {
   return text;
 }
 
+function rowsToCsv(rows) {
+  return `\ufeff${rows.map((row) => row.map(csvEscape).join(';')).join('\r\n')}`;
+}
+
 function downloadCsv(filename, rows) {
-  const csv = `\ufeff${rows.map((row) => row.map(csvEscape).join(';')).join('\r\n')}`;
+  const csv = rowsToCsv(rows);
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -40,6 +44,27 @@ function downloadCsv(filename, rows) {
   link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+function downloadBlob(filename, blob) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function asciiGeneratedText(value) {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replaceAll('\u00c3\u00a1', 'a')
+    .replaceAll('\u00c3\u00a9', 'e')
+    .replaceAll('\u00c3\u00ad', 'i')
+    .replaceAll('\u00c3\u00b3', 'o')
+    .replaceAll('\u00c3\u00ba', 'u')
+    .replaceAll('\u00c3\u00b1', 'n');
 }
 
 const state = {
@@ -56,7 +81,8 @@ const state = {
   comprobantesFiltro: 'PENDIENTE',
   comprobanteProcesandoId: null,
   comprobantesPagoEnProceso: new Set(),
-  calculo: null
+  calculo: null,
+  calculosRpc: {}
 };
 
 function isAdmin() {
@@ -188,6 +214,7 @@ async function loadData() {
   state.cargos = cargos.data || [];
   state.profiles = profiles.data || [];
   state.comprobantes = comprobantes.data || [];
+  state.calculosRpc = {};
 
   renderAll();
   showNotice('', 'info');
@@ -683,6 +710,7 @@ function renderCierreMensual() {
       <span>Estado de cierre del mes ${escapeHtml(formatMesCuenta(mes))}</span>
       <strong>${escapeHtml(estadoGeneral)}</strong>
       <p>Checklist operativo de solo lectura. No cierra ni bloquea el mes.</p>
+      <button type="button" class="primary" data-cierre-paquete>Generar paquete de cierre</button>
     </article>
     <div class="cierre-checklist">${checks.join('')}</div>
     ${cierreDetalleTable('Detalle de comprobantes pendientes', ['Persona', 'Mes', 'Monto informado', 'Fecha de carga', 'Accion'], pendientesRows)}
@@ -928,7 +956,7 @@ function renderComprobantePagoPanel() {
   `;
 }
 
-function renderMiCuenta() {
+async function renderMiCuenta() {
   const container = byId('mi-cuenta-content');
   if (!container) return;
 
@@ -937,19 +965,26 @@ function renderMiCuenta() {
     return;
   }
 
-  if (!state.profile?.persona_id) {
-    container.innerHTML = '<p class="notice" data-type="info">Tu cuenta esta pendiente de vinculacion con una persona. Avisa al administrador.</p>';
+  const mes = normalizarMesClave(byId('mi-cuenta-mes').value || currentMonth());
+  let cargo = null;
+  try {
+    const calculoRpc = await obtenerCalculoMensualEstado(mes, true);
+    cargo = calculoRpc.cargos?.[0] || null;
+  } catch (error) {
+    container.innerHTML = '<p class="notice" data-type="error">No se pudo calcular el estado mensual de tu cuenta para este mes. Avisale al administrador.</p>';
+    setError(error);
+    return;
+  }
+  const persona = cargo?.persona || state.personas.find((item) => mismaPersona(item.id, state.profile?.persona_id));
+
+  if (!cargo || !persona) {
+    container.innerHTML = `
+      <p class="notice" data-type="error">No se pudo calcular el estado mensual de tu cuenta para este mes. Avisale al administrador.</p>
+      <p class="muted">Mes consultado: ${escapeHtml(formatMesCuenta(mes))}. No se muestran importes globales como fallback.</p>
+    `;
     return;
   }
 
-  const persona = state.personas.find((item) => mismaPersona(item.id, state.profile.persona_id));
-  if (!persona) {
-    container.innerHTML = '<p class="notice" data-type="info">Tu cuenta esta pendiente de vinculacion con una persona. Avisa al administrador.</p>';
-    return;
-  }
-
-  const mes = byId('mi-cuenta-mes').value || currentMonth();
-  const cargo = filaMiCuentaDesdeCalculoMensual(persona.id, mes);
   const pagos = state.pagos
     .filter((pago) => mismaPersona(pago.persona_id, persona.id))
     .sort((a, b) => `${b.fecha_pago}${b.created_at || ''}`.localeCompare(`${a.fecha_pago}${a.created_at || ''}`));
@@ -963,38 +998,6 @@ function renderMiCuenta() {
     </tr>
   `);
   const mesCuenta = formatMesCuenta(mes);
-
-  if (!cargo) {
-    container.innerHTML = `
-      <p class="notice" data-type="error">No se pudo calcular el estado mensual de tu cuenta para este mes.</p>
-      <div class="account-grid">
-        <article class="metric"><span>Nombre</span><strong>${escapeHtml(persona.nombre || '')}</strong></article>
-        <article class="metric"><span>Dependencia</span><strong>${escapeHtml(persona.dependencia || '-')}</strong></article>
-        <article class="metric"><span>Estado</span><strong>${escapeHtml(persona.estado || '-')}</strong></article>
-        <article class="metric"><span>Router</span><strong>${escapeHtml(persona.router_estado || '-')}</strong></article>
-        <article class="metric"><span>Telefono WhatsApp</span><strong>${escapeHtml(persona.telefono_whatsapp || '-')}</strong></article>
-        <article class="metric"><span>MAC 1 / MAC 2</span><strong>${escapeHtml([persona.mac_1 || persona.mac, persona.mac_2].filter(Boolean).join(' / ') || '-')}</strong></article>
-      </div>
-      <p class="muted">Mes consultado: ${escapeHtml(mesCuenta)}. No se muestran importes globales como fallback.</p>
-      <h3>Mis pagos</h3>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Fecha</th>
-              <th>Mes</th>
-              <th>Concepto</th>
-              <th>Monto</th>
-              <th>Observaciones</th>
-            </tr>
-          </thead>
-          <tbody>${pagosRows.join('') || '<tr><td colspan="5">Sin pagos registrados.</td></tr>'}</tbody>
-        </table>
-      </div>
-      ${renderComprobantesPersona(persona.id)}
-    `;
-    return;
-  }
 
   const cuenta = estadoCuentaCargo(cargo);
   const cuentaResumen = cuenta;
@@ -1184,6 +1187,24 @@ function mismaPersona(left, right) {
   return String(left) === String(right);
 }
 
+function normalizarMesClave(mes) {
+  return String(mes || '').replace('/', '-');
+}
+
+function obtenerPersonaIdFilaCalculo(fila) {
+  return fila?.persona_id || fila?.personaId || fila?.persona?.id || fila?.id_persona || null;
+}
+
+function estadoRpcToUi(estado) {
+  const value = String(estado || '').toUpperCase();
+  if (value === 'AL DIA') return 'Al dia';
+  if (value === 'SALDO A FAVOR') return 'Saldo a favor';
+  if (value === 'SIN CARGO') return 'Sin cargo';
+  if (value === 'PARCIAL') return 'Parcial';
+  if (value === 'PENDIENTE') return 'Pendiente';
+  return estado || 'Sin cargo';
+}
+
 function cargoConPersona(cargo) {
   if (!cargo) return null;
   return {
@@ -1195,6 +1216,94 @@ function cargoConPersona(cargo) {
 function cargoEsVigente(cargo) {
   const cierre = state.cierres.find((item) => item.id === cargo.cierre_mensual_id);
   return !cierre || cierre.estado !== 'ANULADO';
+}
+
+function filaRpcACargo(row) {
+  const personaLocal = state.personas.find((persona) => mismaPersona(persona.id, row.persona_id));
+  const persona = {
+    ...(personaLocal || {}),
+    id: row.persona_id,
+    nombre: row.nombre || personaLocal?.nombre || '',
+    dependencia: row.dependencia ?? personaLocal?.dependencia ?? '',
+    router_estado: row.router_estado || personaLocal?.router_estado || '',
+    mac_1: row.mac_1 ?? personaLocal?.mac_1 ?? '',
+    mac_2: row.mac_2 ?? personaLocal?.mac_2 ?? ''
+  };
+  const equipoDelMes = round2(Number(row.equipo_mes || 0));
+  const abonoDelMes = round2(Number(row.abono_mes || 0));
+  const totalDelMes = round2(Number(row.total_mes || 0));
+  const pagado = round2(Number(row.pagado || 0));
+  const totalAjuste = round2(Number(row.ajuste_saldo_favor || 0));
+  const pendiente = round2(Number(row.pendiente_hoy || 0));
+  const estado = estadoRpcToUi(row.estado);
+  const conceptoEquipo = equipoDelMes > 0
+    ? personaLocal?.es_fundador ? 'COMPRA_INICIAL' : 'REGULARIZACION'
+    : null;
+
+  return {
+    persona_id: row.persona_id,
+    persona,
+    mes: row.mes,
+    abono_base: abonoDelMes,
+    cargo_equipo: equipoDelMes,
+    concepto_equipo: conceptoEquipo,
+    monto_a_pagar: totalDelMes,
+    concepto: row.observacion || '',
+    saldo_equipo_antes: equipoDelMes,
+    saldo_equipo_despues: 0,
+    compensacion_aplicada: 0,
+    __rpc: true,
+    __observacion: row.observacion || '',
+    __cuenta: {
+      pagadoEquipoMes: 0,
+      pagadoAbonoMes: 0,
+      equipoDelMes,
+      abonoDelMes,
+      totalDelMes,
+      pagado,
+      totalAjuste,
+      pendiente,
+      saldoAFavor: totalAjuste > 0.01 ? totalAjuste : 0,
+      estado
+    }
+  };
+}
+
+function calculoDesdeRpcRows(rows, mes) {
+  const cargos = (rows || []).map(filaRpcACargo);
+  const totalAbonoBase = round2(cargos.reduce((total, cargo) => total + Number(cargo.abono_base || 0), 0));
+  const totalCargoEquipo = round2(cargos.reduce((total, cargo) => total + Number(cargo.cargo_equipo || 0), 0));
+  const sumaCargos = round2(cargos.reduce((total, cargo) => total + Number(cargo.monto_a_pagar || 0), 0));
+  const totalEquipo = state.config ? totalEquipoActualizado(state.config) : totalCargoEquipo;
+  const totalAbono = state.config ? totalAbonoActualizado(state.config) : totalAbonoBase;
+
+  return {
+    mes,
+    cerrado: Boolean(cierrePorMes(mes, 'CERRADO')),
+    desde_rpc: true,
+    total_equipo_actualizado: totalEquipo,
+    total_abono_actualizado: totalAbono,
+    usuarios_activos: cargos.length,
+    total_abono_base: totalAbonoBase,
+    total_cargo_equipo: totalCargoEquipo,
+    total_compensacion_aplicada: 0,
+    total_modelo: sumaCargos,
+    suma_cargos: sumaCargos,
+    diferencia_redondeo: 0,
+    cargos
+  };
+}
+
+async function obtenerCalculoMensualEstado(mes, force = false) {
+  const mesClave = normalizarMesClave(mes || currentMonth());
+  if (!force && state.calculosRpc[mesClave]) return state.calculosRpc[mesClave];
+
+  const { data, error } = await state.supabase.rpc('get_calculo_mensual_estado', { p_mes: mesClave });
+  if (error) throw error;
+
+  const calculo = calculoDesdeRpcRows(data || [], mesClave);
+  state.calculosRpc[mesClave] = calculo;
+  return calculo;
 }
 
 function calculoGuardadoPorMes(cierre) {
@@ -1257,17 +1366,14 @@ function cargoMensualPersona(personaId, mes) {
   return cargo ? cargoConPersona(cargo) : null;
 }
 
-function filaMiCuentaDesdeCalculoMensual(personaId, mes) {
-  const calculoVisible = calculoGuardadoVisible(mes);
-  const cargoVisible = calculoVisible?.cargos?.find((item) => mismaPersona(item.persona_id, personaId));
-  if (cargoVisible) return cargoConPersona(cargoVisible);
-
-  const cargoGuardado = state.cargos.find((cargo) => (
-    cargo.mes === mes &&
-    mismaPersona(cargo.persona_id, personaId) &&
-    cargoEsVigente(cargo)
+async function filaMiCuentaDesdeCalculoMensual(personaId, mes) {
+  const mesClave = normalizarMesClave(mes);
+  const personaIdProfile = String(personaId || '');
+  const calculoRpc = await obtenerCalculoMensualEstado(mesClave);
+  const cargoRpc = calculoRpc.cargos?.find((fila) => (
+    String(obtenerPersonaIdFilaCalculo(fila) || '') === personaIdProfile
   ));
-  return cargoGuardado ? cargoConPersona(cargoGuardado) : null;
+  return cargoRpc ? cargoConPersona(cargoRpc) : null;
 }
 
 function renderPagos() {
@@ -1349,7 +1455,7 @@ function formatMesCuenta(mes) {
 }
 
 function cuentaStatusClass(estado) {
-  if (estado === 'Al día') return 'account-status-ok';
+  if (estado === 'Al dia') return 'account-status-ok';
   if (estado === 'Saldo a favor') return 'account-status-credit';
   if (estado === 'Parcial') return 'account-status-partial';
   if (estado === 'Pendiente') return 'account-status-due';
@@ -1382,6 +1488,8 @@ function observacionCargo(cargo) {
 }
 
 function estadoCuentaCargo(cargo) {
+  if (cargo.__cuenta) return cargo.__cuenta;
+
   const pagadoEquipoMes = pagosPersonaMesConceptos(cargo.persona_id, cargo.mes, ['COMPRA_INICIAL', 'REGULARIZACION']);
   const pagadoAbonoMes = pagosPersonaMes(cargo.persona_id, cargo.mes, 'ABONO');
   const totalAjuste = pagosPersonaMes(cargo.persona_id, cargo.mes, 'AJUSTE');
@@ -1401,7 +1509,7 @@ function estadoCuentaCargo(cargo) {
   } else if (pendiente <= 0.01 && totalAjuste > 0.01) {
     estado = 'Saldo a favor';
   } else if (pendiente <= 0.01) {
-    estado = 'Al día';
+    estado = 'Al dia';
   } else if (pagadoSinAjuste <= 0.01) {
     estado = 'Pendiente';
   } else {
@@ -1423,6 +1531,8 @@ function estadoCuentaCargo(cargo) {
 }
 
 function observacionEstadoCuenta(cargo, cuenta) {
+  if (cargo.__observacion) return cargo.__observacion;
+
   let base = 'Cuota mensual';
   const conceptoEquipo = cargo.concepto_equipo || (
     cuenta.pagadoEquipoMes > 0 && pagosPersonaMes(cargo.persona_id, cargo.mes, 'REGULARIZACION') > 0 ? 'REGULARIZACION' : null
@@ -1440,7 +1550,7 @@ function observacionEstadoCuenta(cargo, cuenta) {
   if (cuenta.estado === 'Saldo a favor') {
     return `${base} pagados. Saldo a favor: ${formatARSNegativoVisual(cuenta.saldoAFavor)}`;
   }
-  if (cuenta.estado === 'Al día') {
+  if (cuenta.estado === 'Al dia') {
     return base === 'Cuota mensual' ? 'Cuota mensual pagada' : `${base} pagados`;
   }
   if (cuenta.estado === 'Parcial') {
@@ -1463,7 +1573,7 @@ function estadoCuentaDesdePagos(personaId, mes) {
     ? 'Sin cargo'
     : totalAjuste > 0.01
       ? 'Saldo a favor'
-      : 'Al día';
+      : 'Al dia';
   const observaciones = [];
 
   if (!tienePagos) {
@@ -1550,7 +1660,7 @@ function renderCargosTable(resultado, readonly = false) {
     <div class="summary-line">
       <span>Abono mensual: <strong>${formatARS(resultado.total_abono_actualizado)}</strong></span>
       <span>Equipo del mes: <strong>${formatARS(resultado.total_cargo_equipo || 0)}</strong></span>
-      <span>Compensación: <strong>${formatARS(resultado.total_compensacion_aplicada || 0)}</strong></span>
+      <span>Compensacion: <strong>${formatARS(resultado.total_compensacion_aplicada || 0)}</strong></span>
       <span>Total a cobrar: <strong>${formatARS(resultado.suma_cargos)}</strong></span>
       <span>Diferencia: <strong>${formatARS(resultado.diferencia_redondeo)}</strong></span>
     </div>
@@ -1565,7 +1675,7 @@ function renderCargosTable(resultado, readonly = false) {
           <th>Ajuste / saldo a favor</th>
           <th>Pendiente hoy</th>
           <th>Estado</th>
-          <th>Observación</th>
+          <th>Observacion</th>
         </tr>
       </thead>
       <tbody>${rows.join('')}</tbody>
@@ -1574,10 +1684,23 @@ function renderCargosTable(resultado, readonly = false) {
   `;
 }
 
-function renderCalculo() {
+async function renderCalculo() {
   const mes = byId('calculo-mes')?.value || state.calculo?.mes;
-  const resultado = calculoGuardadoVisible(mes) || state.calculo;
-  byId('calculo-result').innerHTML = renderCargosTable(resultado, !isAdmin());
+  const container = byId('calculo-result');
+  if (!container) return;
+  if (!mes) {
+    container.innerHTML = '<p class="muted">Selecciona un mes para ver los cargos.</p>';
+    return;
+  }
+
+  try {
+    const resultado = await obtenerCalculoMensualEstado(mes);
+    state.calculo = resultado;
+    container.innerHTML = renderCargosTable(resultado, !isAdmin());
+  } catch (error) {
+    container.innerHTML = '<p class="notice" data-type="error">No se pudo calcular el estado mensual.</p>';
+    setError(error);
+  }
 }
 
 function cargosParaMensajes(mes) {
@@ -1996,7 +2119,9 @@ async function registrarPagoCompletoMes({ personaId, mes, monto, fechaPago, medi
     ...basePayload,
     monto: imputacion.monto,
     concepto: imputacion.concepto,
-    observaciones: imputacion.observaciones || basePayload.observaciones
+    observaciones: imputacion.observaciones
+      ? asciiGeneratedText(imputacion.observaciones)
+      : basePayload.observaciones
   }));
 
   const { data, error } = await state.supabase
@@ -2211,6 +2336,11 @@ function handlePanelMensualAction(event) {
 }
 
 function handleCierreMensualAction(event) {
+  if (event.target.dataset.cierrePaquete !== undefined) {
+    generarPaqueteCierre();
+    return;
+  }
+
   const targetSection = event.target.dataset.cierreNav;
   if (!targetSection) return;
 
@@ -2455,7 +2585,9 @@ async function savePago(event) {
       ...basePayload,
       monto: imputacion.monto,
       concepto: imputacion.concepto,
-      observaciones: imputacion.observaciones || basePayload.observaciones
+      observaciones: imputacion.observaciones
+        ? asciiGeneratedText(imputacion.observaciones)
+        : basePayload.observaciones
     }));
 
     const { error } = await state.supabase.from('pagos').insert(payload);
@@ -2471,20 +2603,13 @@ async function savePago(event) {
   }
 }
 
-function calcularMes() {
+async function calcularMes() {
   try {
     const mes = byId('calculo-mes').value;
     if (!mes) throw new Error('Selecciona un mes.');
     if (!validarMesCierre(mes)) throw new Error('El mes debe tener formato YYYY-MM.');
-    if (!state.config) throw new Error('Falta configuracion inicial.');
-    const cierreCerrado = cierrePorMes(mes, 'CERRADO');
-    if (cierreCerrado) {
-      state.calculo = calculoGuardadoPorMes(cierreCerrado);
-      renderCalculo();
-      return setError('El mes ya está cerrado y no puede recalcularse.');
-    }
-    state.calculo = calcularCargosMensuales(state.config, state.personas, state.pagos, mes);
-    renderCalculo();
+    state.calculo = await obtenerCalculoMensualEstado(mes, true);
+    byId('calculo-result').innerHTML = renderCargosTable(state.calculo, !isAdmin());
     setOk('Cargos calculados.');
   } catch (error) {
     setError(error);
@@ -2608,7 +2733,7 @@ async function marcarCierreComoCerrado(cierre, calculo) {
     .maybeSingle();
 
   if (error) throw error;
-  if (!data) throw new Error('El mes ya está cerrado y no puede recalcularse.');
+  if (!data) throw new Error('El mes ya esta cerrado y no puede recalcularse.');
   return data;
 }
 
@@ -2617,7 +2742,7 @@ async function closeMonth(event) {
   if (!isAdmin()) return setError('Tu rol permite lectura, no modificacion.');
   if (!state.calculo) return setError('Primero calcula el mes.');
   if (cierrePorMes(state.calculo.mes, 'CERRADO')) {
-    return setError('El mes ya está cerrado y no puede recalcularse.');
+    return setError('El mes ya esta cerrado y no puede recalcularse.');
   }
   if (Math.abs(diferenciaTotalMensual(state.calculo)) > CIERRE_MENSUAL_TOLERANCIA) {
     return setError('La suma de cargos no coincide con el total mensual.');
@@ -2627,7 +2752,7 @@ async function closeMonth(event) {
     setLoading('Cerrando mes...');
     const cierreActual = await obtenerCierrePorMes(state.calculo.mes);
     if (cierreActual?.estado === 'CERRADO') {
-      return setError('El mes ya está cerrado y no puede recalcularse.');
+      return setError('El mes ya esta cerrado y no puede recalcularse.');
     }
 
     const cierre = cierreActual || await crearCierreAbierto(state.calculo);
@@ -2743,8 +2868,8 @@ async function handleRouterAction(event) {
   }
 }
 
-function exportPersonas() {
-  downloadCsv('personas.csv', [
+function personasCsvRows() {
+  return [
     ['id', 'nombre', 'dependencia', 'estado', 'es_fundador', 'fecha_ingreso', 'telefono_whatsapp', 'mac_1', 'mac_2', 'mac', 'router_estado', 'observaciones'],
     ...state.personas.map((persona) => [
       persona.id,
@@ -2760,7 +2885,11 @@ function exportPersonas() {
       persona.router_estado,
       persona.observaciones
     ])
-  ]);
+  ];
+}
+
+function exportPersonas() {
+  downloadCsv('personas.csv', personasCsvRows());
 }
 
 function exportMonth() {
@@ -2781,13 +2910,12 @@ function comprobantesEstadoCantidad(comprobantes, estado) {
   return comprobantes.filter((comprobante) => (comprobante.estado || 'PENDIENTE') === estado).length;
 }
 
-function exportBackupMensual() {
-  const mes = exportMonth();
+function backupMensualCsvRows(mes) {
   const personasActivas = state.personas
     .filter((persona) => persona.estado === 'ACTIVO')
     .sort((a, b) => a.nombre.localeCompare(b.nombre));
 
-  downloadCsv(`backup-mensual-${mes}.csv`, [
+  return [
     [
       'mes',
       'persona',
@@ -2832,7 +2960,12 @@ function exportBackupMensual() {
         comprobantesEstadoCantidad(comprobantes, 'DESCARTADO')
       ];
     })
-  ]);
+  ];
+}
+
+function exportBackupMensual() {
+  const mes = exportMonth();
+  downloadCsv(`backup-mensual-${mes}.csv`, backupMensualCsvRows(mes));
 }
 
 function exportPagosMes() {
@@ -2841,11 +2974,10 @@ function exportPagosMes() {
   exportPagos(pagosMes, `pagos-${mes}.csv`);
 }
 
-function exportComprobantesMes() {
-  const mes = exportMonth();
+function comprobantesMesCsvRows(mes) {
   const personasPorId = new Map(state.personas.map((persona) => [String(persona.id), persona]));
   const comprobantesMes = state.comprobantes.filter((comprobante) => comprobante.mes_aplicado === mes);
-  downloadCsv(`comprobantes-${mes}.csv`, [
+  return [
     ['fecha_carga', 'mes_aplicado', 'persona', 'monto_informado', 'estado', 'archivo_nombre', 'archivo_tipo', 'observaciones', 'revisado_at'],
     ...comprobantesMes.map((comprobante) => {
       const persona = personasPorId.get(String(comprobante.persona_id));
@@ -2861,10 +2993,15 @@ function exportComprobantesMes() {
         comprobante.revisado_at
       ];
     })
-  ]);
+  ];
 }
 
-function exportPagos(pagos, filename) {
+function exportComprobantesMes() {
+  const mes = exportMonth();
+  downloadCsv(`comprobantes-${mes}.csv`, comprobantesMesCsvRows(mes));
+}
+
+function pagosCsvRows(pagos) {
   const personasPorId = new Map(state.personas.map((persona) => [String(persona.id), persona]));
   const grupos = new Map();
 
@@ -2926,7 +3063,7 @@ function exportPagos(pagos, filename) {
       a.mes_aplicado.localeCompare(b.mes_aplicado)
     ));
 
-  downloadCsv(filename, [
+  return [
     ['Nombre', 'Fecha de pago', 'Total pagado', 'Equipo', 'Abono', 'Ajuste', 'Mes aplicado', 'Medio', 'Observaciones'],
     ...filas.map((fila) => [
       fila.nombre,
@@ -2939,7 +3076,156 @@ function exportPagos(pagos, filename) {
       fila.medio,
       fila.observaciones
     ])
-  ]);
+  ];
+}
+
+function exportPagos(pagos, filename) {
+  downloadCsv(filename, pagosCsvRows(pagos));
+}
+
+function cuentasOperativasMes(mes) {
+  return state.personas
+    .filter((persona) => persona.estado === 'ACTIVO')
+    .sort((a, b) => a.nombre.localeCompare(b.nombre))
+    .map((persona) => cuentaOperativaPersona(persona, mes));
+}
+
+function estadoCuentaCsvRows(mes) {
+  return [
+    ['mes', 'persona', 'dependencia', 'equipo_mes', 'abono_mes', 'total_mes', 'pagado', 'ajuste_saldo_favor', 'pendiente_hoy', 'estado', 'observacion'],
+    ...cuentasOperativasMes(mes).map((item) => [
+      mes,
+      item.persona.nombre,
+      item.persona.dependencia,
+      item.cuenta.equipoDelMes,
+      item.cuenta.abonoDelMes,
+      item.cuenta.totalDelMes,
+      item.cuenta.pagado,
+      item.cuenta.saldoAFavor,
+      item.cuenta.pendiente,
+      item.cuenta.estado,
+      item.cargo ? observacionEstadoCuenta(item.cargo, item.cuenta) : item.cuenta.observacion
+    ])
+  ];
+}
+
+function accionRouterSugerida(item) {
+  if (item.debeYHabilitado) return 'Bloquear MAC en router o revisar pago.';
+  if (item.pagadoYBloqueado) return 'Habilitar MAC en router.';
+  if (item.sinMac) return 'Pedir o cargar MAC.';
+  return 'Sin accion sugerida.';
+}
+
+function routerMacCsvRows(mes) {
+  return [
+    ['mes', 'persona', 'dependencia', 'router_estado', 'mac_1', 'mac_2', 'estado_cuenta', 'pendiente_hoy', 'accion_sugerida'],
+    ...cuentasOperativasMes(mes).map((item) => [
+      mes,
+      item.persona.nombre,
+      item.persona.dependencia,
+      item.routerEstado,
+      item.persona.mac_1 || item.persona.mac,
+      item.persona.mac_2,
+      item.cuenta.estado,
+      item.cuenta.pendiente,
+      accionRouterSugerida(item)
+    ])
+  ];
+}
+
+function deudoresCsvRows(mes) {
+  return [
+    ['mes', 'persona', 'dependencia', 'total_mes', 'pagado', 'pendiente_hoy', 'estado'],
+    ...cuentasOperativasMes(mes)
+      .filter((item) => item.conDeuda)
+      .map((item) => [
+        mes,
+        item.persona.nombre,
+        item.persona.dependencia,
+        item.cuenta.totalDelMes,
+        item.cuenta.pagado,
+        item.cuenta.pendiente,
+        item.cuenta.estado
+      ])
+  ];
+}
+
+function comprobantesPendientesCsvRows(mes) {
+  const personasPorId = new Map(state.personas.map((persona) => [String(persona.id), persona]));
+  const comprobantesPendientes = state.comprobantes.filter((comprobante) => (
+    comprobante.mes_aplicado === mes &&
+    (comprobante.estado || 'PENDIENTE') === 'PENDIENTE'
+  ));
+  return [
+    ['fecha_carga', 'mes_aplicado', 'persona', 'monto_informado', 'estado', 'archivo_nombre', 'archivo_tipo', 'observaciones'],
+    ...comprobantesPendientes.map((comprobante) => {
+      const persona = personasPorId.get(String(comprobante.persona_id));
+      return [
+        comprobante.created_at,
+        comprobante.mes_aplicado,
+        persona?.nombre || '',
+        comprobante.monto_informado,
+        comprobante.estado || 'PENDIENTE',
+        comprobante.archivo_nombre,
+        comprobante.archivo_tipo,
+        comprobante.observaciones
+      ];
+    })
+  ];
+}
+
+function saldoFavorCsvRows(mes) {
+  return [
+    ['mes', 'persona', 'dependencia', 'total_mes', 'pagado', 'ajuste_saldo_favor', 'pendiente_hoy', 'estado'],
+    ...cuentasOperativasMes(mes)
+      .filter((item) => item.saldoAFavor)
+      .map((item) => [
+        mes,
+        item.persona.nombre,
+        item.persona.dependencia,
+        item.cuenta.totalDelMes,
+        item.cuenta.pagado,
+        item.saldoFavorVisual,
+        item.cuenta.pendiente,
+        item.cuenta.estado
+      ])
+  ];
+}
+
+async function generarPaqueteCierre() {
+  if (isUsuario()) return setError('Tu rol no permite generar paquete de cierre.');
+  const JSZipCtor = window.JSZip;
+  if (!JSZipCtor) {
+    setError('No se pudo generar el ZIP. Verificar que la libreria local JSZip este cargada.');
+    return;
+  }
+
+  try {
+    const mes = cierreMonth();
+    const pagosMes = state.pagos.filter((pago) => pago.mes_aplicado === mes);
+    const zip = new JSZipCtor();
+    const files = [
+      [`01_backup_mensual_${mes}.csv`, backupMensualCsvRows(mes)],
+      [`02_pagos_mes_${mes}.csv`, pagosCsvRows(pagosMes)],
+      [`03_comprobantes_mes_${mes}.csv`, comprobantesMesCsvRows(mes)],
+      [`04_estado_cuenta_${mes}.csv`, estadoCuentaCsvRows(mes)],
+      [`05_router_mac_${mes}.csv`, routerMacCsvRows(mes)],
+      [`06_deudores_${mes}.csv`, deudoresCsvRows(mes)],
+      [`07_comprobantes_pendientes_${mes}.csv`, comprobantesPendientesCsvRows(mes)],
+      [`08_saldo_a_favor_${mes}.csv`, saldoFavorCsvRows(mes)],
+      ['99_personas.csv', personasCsvRows()]
+    ];
+
+    for (const [filename, rows] of files) {
+      zip.file(filename, rowsToCsv(rows));
+    }
+
+    const blob = await zip.generateAsync({ type: 'blob' });
+    downloadBlob(`cierre_starlink_${mes}.zip`, blob);
+    setOk('Paquete de cierre generado. Guardar este archivo como respaldo operativo del mes.');
+  } catch (error) {
+    setError(error);
+  }
 }
 
 function exportCargos() {
