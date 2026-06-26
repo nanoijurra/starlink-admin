@@ -12,7 +12,6 @@ import { estadoOptions, personaOptions, renderPersonasTable } from './personas.j
 import {
   byId,
   currentMonth,
-  downloadCsv,
   escapeHtml,
   formToObject,
   formatARS,
@@ -23,6 +22,25 @@ import {
 
 const CIERRE_MENSUAL_TOLERANCIA = 0.01;
 const MES_CIERRE_PATTERN = /^\d{4}-\d{2}$/;
+
+function csvEscape(value) {
+  const text = String(value ?? '');
+  if (/[";\n\r]/.test(text)) {
+    return `"${text.replaceAll('"', '""')}"`;
+  }
+  return text;
+}
+
+function downloadCsv(filename, rows) {
+  const csv = `\ufeff${rows.map((row) => row.map(csvEscape).join(';')).join('\r\n')}`;
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
 
 const state = {
   supabase: null,
@@ -37,6 +55,7 @@ const state = {
   comprobantes: [],
   comprobantesFiltro: 'PENDIENTE',
   comprobanteProcesandoId: null,
+  comprobantesPagoEnProceso: new Set(),
   calculo: null
 };
 
@@ -109,8 +128,8 @@ function applyAccess() {
   const allowedSections = role === 'USUARIO'
     ? ['mi-cuenta']
     : role === 'ADMIN'
-      ? ['dashboard', 'panel-mensual', 'config', 'usuarios', 'personas', 'pagos', 'comprobantes', 'calculo', 'mensajes', 'router', 'moras', 'exportacion']
-      : ['dashboard', 'panel-mensual', 'config', 'personas', 'pagos', 'comprobantes', 'calculo', 'mensajes', 'router', 'moras', 'exportacion'];
+      ? ['dashboard', 'panel-mensual', 'cierre-mensual', 'config', 'usuarios', 'personas', 'pagos', 'comprobantes', 'calculo', 'mensajes', 'router', 'moras', 'exportacion']
+      : ['dashboard', 'panel-mensual', 'cierre-mensual', 'config', 'personas', 'pagos', 'comprobantes', 'calculo', 'mensajes', 'router', 'moras', 'exportacion'];
 
   document.querySelectorAll('.tabs button').forEach((button) => {
     const allowed = allowedSections.includes(button.dataset.section);
@@ -179,6 +198,7 @@ function renderAll() {
   renderConfig();
   renderUsuarios();
   renderPanelMensual();
+  renderCierreMensual();
   renderMiCuenta();
   renderDashboard();
   renderPersonas();
@@ -221,8 +241,16 @@ function panelMonth() {
     || currentMonth();
 }
 
+function cierreMonth() {
+  return byId('cierre-mes')?.value
+    || byId('panel-mes')?.value
+    || byId('calculo-mes')?.value
+    || byId('dashboard-mes')?.value
+    || currentMonth();
+}
+
 function cuentaOperativaPersona(persona, mes) {
-  const cargo = buscarCargoAsociado(persona.id, mes);
+  const cargo = cargoMensualPersona(persona.id, mes);
   const cuenta = cargo ? estadoCuentaCargo(cargo) : estadoCuentaDesdePagos(persona.id, mes);
   const pagosDelMes = pagosExistentesPersonaMes(persona.id, mes);
   const tieneMac = macsPersona(persona).length > 0;
@@ -464,6 +492,206 @@ function renderPanelMensual() {
   `;
 }
 
+function cierreCheckItem({ titulo, estado, texto, detalle, destino }) {
+  const nav = destino
+    ? `<button type="button" data-cierre-nav="${escapeHtml(destino)}">Ir</button>`
+    : '';
+  return `
+    <article class="cierre-check cierre-${escapeHtml(estado)}">
+      <div>
+        <span>${escapeHtml(titulo)}</span>
+        <strong>${escapeHtml(detalle || '')}</strong>
+        <p>${escapeHtml(texto || '')}</p>
+      </div>
+      ${nav}
+    </article>
+  `;
+}
+
+function cierreDetalleTable(titulo, headers, rows, emptyText) {
+  if (!rows.length) return '';
+  return `
+    <section class="panel-block">
+      <h3>${escapeHtml(titulo)}</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead>
+          <tbody>${rows.join('') || `<tr><td colspan="${headers.length}">${escapeHtml(emptyText || 'Sin datos.')}</td></tr>`}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderCierreMensual() {
+  const container = byId('cierre-mensual-content');
+  if (!container) return;
+
+  if (isUsuario()) {
+    container.innerHTML = '<p class="muted">Vista disponible para administracion y lectura.</p>';
+    return;
+  }
+
+  const mes = cierreMonth();
+  const personasActivas = state.personas.filter((persona) => persona.estado === 'ACTIVO');
+  const cuentas = personasActivas.map((persona) => cuentaOperativaPersona(persona, mes));
+  const comprobantesMes = state.comprobantes.filter((comprobante) => comprobante.mes_aplicado === mes);
+  const comprobantesPendientes = comprobantesMes.filter((comprobante) => (comprobante.estado || 'PENDIENTE') === 'PENDIENTE');
+  const comprobantesDescartados = comprobantesMes.filter((comprobante) => comprobante.estado === 'DESCARTADO');
+  const conDeuda = cuentas.filter((item) => item.conDeuda);
+  const parciales = cuentas.filter((item) => item.pagoParcial);
+  const saldoFavor = cuentas.filter((item) => item.saldoAFavor);
+  const debeYHabilitado = cuentas.filter((item) => item.debeYHabilitado);
+  const pagadoYBloqueado = cuentas.filter((item) => item.pagadoYBloqueado);
+  const sinMac = cuentas.filter((item) => item.sinMac);
+  const totalPendiente = round2(conDeuda.reduce((total, item) => total + item.cuenta.pendiente, 0));
+  const totalSaldoFavor = round2(saldoFavor.reduce((total, item) => total + item.saldoFavorVisual, 0));
+  const requiereRevision = (
+    comprobantesPendientes.length > 0 ||
+    conDeuda.length > 0 ||
+    parciales.length > 0 ||
+    debeYHabilitado.length > 0 ||
+    pagadoYBloqueado.length > 0
+  );
+  const estadoGeneral = requiereRevision ? 'Requiere revision' : 'Listo para cierre operativo';
+  const estadoClassName = requiereRevision ? 'warning' : 'ok';
+
+  const checks = [
+    cierreCheckItem({
+      titulo: 'Backup mensual',
+      estado: 'info',
+      detalle: 'Recordatorio',
+      texto: 'Descargar backup mensual desde Exportacion antes de dar por cerrado el mes.',
+      destino: 'exportacion'
+    }),
+    cierreCheckItem({
+      titulo: 'Comprobantes pendientes',
+      estado: comprobantesPendientes.length ? 'warning' : 'ok',
+      detalle: `${comprobantesPendientes.length} pendiente(s)`,
+      texto: comprobantesPendientes.length ? 'Revisar Comprobantes.' : 'Sin comprobantes pendientes del mes.',
+      destino: comprobantesPendientes.length ? 'comprobantes' : ''
+    }),
+    cierreCheckItem({
+      titulo: 'Pagos pendientes',
+      estado: conDeuda.length ? 'warning' : 'ok',
+      detalle: `${conDeuda.length} persona(s) - ${formatARS(totalPendiente)}`,
+      texto: conDeuda.length ? 'Revisar mensajes de cobro o pagos.' : 'Sin personas activas con pendiente hoy.',
+      destino: conDeuda.length ? 'pagos' : ''
+    }),
+    cierreCheckItem({
+      titulo: 'Pagos parciales',
+      estado: parciales.length ? 'warning' : 'ok',
+      detalle: `${parciales.length} persona(s)`,
+      texto: parciales.length ? 'Hay pagos registrados con saldo pendiente.' : 'Sin pagos parciales pendientes.',
+      destino: parciales.length ? 'pagos' : ''
+    }),
+    cierreCheckItem({
+      titulo: 'Saldo a favor',
+      estado: 'info',
+      detalle: `${saldoFavor.length} persona(s) - ${formatARSNegativoVisual(totalSaldoFavor)}`,
+      texto: 'Informativo. No bloquea el cierre operativo.'
+    }),
+    cierreCheckItem({
+      titulo: 'Router: debe y esta habilitado',
+      estado: debeYHabilitado.length ? 'critical' : 'ok',
+      detalle: `${debeYHabilitado.length} persona(s)`,
+      texto: debeYHabilitado.length ? 'Bloquear MAC en router o revisar pago.' : 'Sin personas deudoras habilitadas.',
+      destino: debeYHabilitado.length ? 'router' : ''
+    }),
+    cierreCheckItem({
+      titulo: 'Router: pago y esta bloqueado',
+      estado: pagadoYBloqueado.length ? 'warning' : 'ok',
+      detalle: `${pagadoYBloqueado.length} persona(s)`,
+      texto: pagadoYBloqueado.length ? 'Habilitar MAC en router.' : 'Sin personas al dia bloqueadas.',
+      destino: pagadoYBloqueado.length ? 'router' : ''
+    }),
+    cierreCheckItem({
+      titulo: 'Personas sin MAC',
+      estado: sinMac.length ? 'soft' : 'ok',
+      detalle: `${sinMac.length} persona(s)`,
+      texto: sinMac.length ? 'Informativo / advertencia suave. Pedir o cargar MAC.' : 'Todas las personas activas tienen MAC cargada.',
+      destino: sinMac.length ? 'personas' : ''
+    }),
+    cierreCheckItem({
+      titulo: 'Comprobantes descartados',
+      estado: 'info',
+      detalle: `${comprobantesDescartados.length} descartado(s)`,
+      texto: 'Informativo. No bloquea el cierre operativo.',
+      destino: comprobantesDescartados.length ? 'comprobantes' : ''
+    }),
+    cierreCheckItem({
+      titulo: 'Mensajes de cobro',
+      estado: 'info',
+      detalle: 'Recordatorio',
+      texto: 'Verificar manualmente que los mensajes necesarios hayan sido enviados.',
+      destino: 'mensajes'
+    })
+  ];
+
+  const pendientesRows = comprobantesPendientes.map((comprobante) => {
+    const persona = state.personas.find((item) => mismaPersona(item.id, comprobante.persona_id));
+    return `
+      <tr>
+        <td>${escapeHtml(persona?.nombre || 'Sin persona')}</td>
+        <td>${escapeHtml(comprobante.mes_aplicado || '')}</td>
+        <td class="number">${comprobante.monto_informado == null ? '-' : formatARS(comprobante.monto_informado)}</td>
+        <td>${escapeHtml(new Date(comprobante.created_at).toLocaleString('es-AR'))}</td>
+        <td><button type="button" data-cierre-nav="comprobantes">Comprobantes</button></td>
+      </tr>
+    `;
+  });
+  const deudaRows = conDeuda.map((item) => `
+    <tr>
+      <td>${escapeHtml(item.persona.nombre)}</td>
+      <td class="number">${formatARS(item.cuenta.totalDelMes)}</td>
+      <td class="number">${formatARS(item.cuenta.pagado)}</td>
+      <td class="number pending-due">${formatARS(item.cuenta.pendiente)}</td>
+      <td><span class="status-pill status-${estadoClass(item.cuenta.estado)}">${escapeHtml(item.cuenta.estado)}</span></td>
+    </tr>
+  `);
+  const parcialesRows = parciales.map((item) => `
+    <tr>
+      <td>${escapeHtml(item.persona.nombre)}</td>
+      <td class="number">${formatARS(item.cuenta.pagado)}</td>
+      <td class="number pending-due">${formatARS(item.cuenta.pendiente)}</td>
+    </tr>
+  `);
+  const routerRows = [
+    ...debeYHabilitado.map((item) => ({
+      persona: item.persona.nombre,
+      estadoCuenta: item.cuenta.estado,
+      routerEstado: item.routerEstado,
+      accion: 'Bloquear MAC en router o revisar pago.'
+    })),
+    ...pagadoYBloqueado.map((item) => ({
+      persona: item.persona.nombre,
+      estadoCuenta: item.cuenta.estado,
+      routerEstado: item.routerEstado,
+      accion: 'Habilitar MAC en router.'
+    }))
+  ].map((item) => `
+    <tr>
+      <td>${escapeHtml(item.persona)}</td>
+      <td>${escapeHtml(item.estadoCuenta)}</td>
+      <td>${escapeHtml(item.routerEstado)}</td>
+      <td>${escapeHtml(item.accion)}</td>
+    </tr>
+  `);
+
+  container.innerHTML = `
+    <article class="cierre-status cierre-status-${estadoClassName}">
+      <span>Estado de cierre del mes ${escapeHtml(formatMesCuenta(mes))}</span>
+      <strong>${escapeHtml(estadoGeneral)}</strong>
+      <p>Checklist operativo de solo lectura. No cierra ni bloquea el mes.</p>
+    </article>
+    <div class="cierre-checklist">${checks.join('')}</div>
+    ${cierreDetalleTable('Detalle de comprobantes pendientes', ['Persona', 'Mes', 'Monto informado', 'Fecha de carga', 'Accion'], pendientesRows)}
+    ${cierreDetalleTable('Detalle de personas con deuda', ['Persona', 'Total del mes', 'Pagado', 'Pendiente hoy', 'Estado'], deudaRows)}
+    ${cierreDetalleTable('Detalle de pagos parciales', ['Persona', 'Pagado', 'Pendiente hoy'], parcialesRows)}
+    ${cierreDetalleTable('Detalle de alertas router', ['Persona', 'Estado cuenta', 'Router', 'Accion sugerida'], routerRows)}
+  `;
+}
+
 function renderConfig() {
   const form = byId('config-form');
   if (!state.config) {
@@ -634,6 +862,7 @@ function renderComprobantePagoPanel() {
 
   const persona = state.personas.find((item) => mismaPersona(item.id, comprobante.persona_id));
   const pagosExistentes = pagosExistentesPersonaMes(comprobante.persona_id, comprobante.mes_aplicado);
+  const estaRegistrando = state.comprobantesPagoEnProceso.has(comprobante.id);
   const pagosRows = pagosExistentes.map((pago) => `
     <tr>
       <td>${escapeHtml(pago.fecha_pago || '')}</td>
@@ -691,7 +920,7 @@ function renderComprobantePagoPanel() {
           <textarea name="observaciones" rows="2" placeholder="Confirmado desde comprobante ${escapeHtml(comprobante.archivo_nombre || '')}"></textarea>
         </label>
         <div class="form-actions">
-          <button type="submit" class="primary">Confirmar y registrar pago</button>
+          <button type="submit" class="primary" ${estaRegistrando ? 'disabled' : ''}>${estaRegistrando ? 'Registrando...' : 'Confirmar y registrar pago'}</button>
           <button type="button" data-comprobante-process-cancel>Cancelar</button>
         </div>
       </form>
@@ -720,19 +949,10 @@ function renderMiCuenta() {
   }
 
   const mes = byId('mi-cuenta-mes').value || currentMonth();
-  const cargo = state.cargos
-    .filter((item) => item.mes === mes && mismaPersona(item.persona_id, persona.id) && cargoEsVigente(item))
-    .map(cargoConPersona)[0] || null;
+  const cargo = filaMiCuentaDesdeCalculoMensual(persona.id, mes);
   const pagos = state.pagos
     .filter((pago) => mismaPersona(pago.persona_id, persona.id))
     .sort((a, b) => `${b.fecha_pago}${b.created_at || ''}`.localeCompare(`${a.fecha_pago}${a.created_at || ''}`));
-  const cuenta = cargo ? estadoCuentaCargo(cargo) : estadoCuentaDesdePagos(persona.id, mes);
-  const cuentaResumen = cuenta;
-  const observacionCuenta = cargo ? observacionEstadoCuenta(cargo, cuenta) : cuenta.observacion;
-  const estadoResumen = cuentaResumen.estado.toUpperCase();
-  const mesCuenta = formatMesCuenta(mes);
-  const statusClass = cuentaStatusClass(cuentaResumen.estado);
-
   const pagosRows = pagos.map((pago) => `
     <tr>
       <td>${escapeHtml(pago.fecha_pago || '')}</td>
@@ -742,6 +962,45 @@ function renderMiCuenta() {
       <td>${escapeHtml(pago.observaciones || '')}</td>
     </tr>
   `);
+  const mesCuenta = formatMesCuenta(mes);
+
+  if (!cargo) {
+    container.innerHTML = `
+      <p class="notice" data-type="error">No se pudo calcular el estado mensual de tu cuenta para este mes.</p>
+      <div class="account-grid">
+        <article class="metric"><span>Nombre</span><strong>${escapeHtml(persona.nombre || '')}</strong></article>
+        <article class="metric"><span>Dependencia</span><strong>${escapeHtml(persona.dependencia || '-')}</strong></article>
+        <article class="metric"><span>Estado</span><strong>${escapeHtml(persona.estado || '-')}</strong></article>
+        <article class="metric"><span>Router</span><strong>${escapeHtml(persona.router_estado || '-')}</strong></article>
+        <article class="metric"><span>Telefono WhatsApp</span><strong>${escapeHtml(persona.telefono_whatsapp || '-')}</strong></article>
+        <article class="metric"><span>MAC 1 / MAC 2</span><strong>${escapeHtml([persona.mac_1 || persona.mac, persona.mac_2].filter(Boolean).join(' / ') || '-')}</strong></article>
+      </div>
+      <p class="muted">Mes consultado: ${escapeHtml(mesCuenta)}. No se muestran importes globales como fallback.</p>
+      <h3>Mis pagos</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Mes</th>
+              <th>Concepto</th>
+              <th>Monto</th>
+              <th>Observaciones</th>
+            </tr>
+          </thead>
+          <tbody>${pagosRows.join('') || '<tr><td colspan="5">Sin pagos registrados.</td></tr>'}</tbody>
+        </table>
+      </div>
+      ${renderComprobantesPersona(persona.id)}
+    `;
+    return;
+  }
+
+  const cuenta = estadoCuentaCargo(cargo);
+  const cuentaResumen = cuenta;
+  const observacionCuenta = observacionEstadoCuenta(cargo, cuenta);
+  const estadoResumen = cuentaResumen.estado.toUpperCase();
+  const statusClass = cuentaStatusClass(cuentaResumen.estado);
 
   container.innerHTML = `
     <article class="account-status-card ${statusClass}">
@@ -766,7 +1025,7 @@ function renderMiCuenta() {
 
     <h3>Detalle del mes ${escapeHtml(mesCuenta)}</h3>
     <div class="account-grid">
-      <article class="metric"><span>Equipo del mes</span><strong>${formatARS(cuenta.equipoDelMes)}</strong></article>
+      <article class="metric"><span>Equipo a pagar</span><strong>${formatARS(cuenta.equipoDelMes)}</strong></article>
       <article class="metric"><span>Abono del mes</span><strong>${formatARS(cuenta.abonoDelMes)}</strong></article>
       <article class="metric"><span>Total del mes</span><strong>${formatARS(cuenta.totalDelMes)}</strong></article>
       <article class="metric"><span>Pagado</span><strong>${formatARS(cuenta.pagado)}</strong></article>
@@ -989,6 +1248,28 @@ function buscarCargoAsociado(personaId, mes) {
   return null;
 }
 
+function cargoMensualPersona(personaId, mes) {
+  const calculoVisible = calculoGuardadoVisible(mes)
+    || (state.calculo?.mes === mes ? state.calculo : null)
+    || (state.config ? calcularCargosMensuales(state.config, state.personas, state.pagos, mes) : null);
+
+  const cargo = calculoVisible?.cargos?.find((item) => mismaPersona(item.persona_id, personaId));
+  return cargo ? cargoConPersona(cargo) : null;
+}
+
+function filaMiCuentaDesdeCalculoMensual(personaId, mes) {
+  const calculoVisible = calculoGuardadoVisible(mes);
+  const cargoVisible = calculoVisible?.cargos?.find((item) => mismaPersona(item.persona_id, personaId));
+  if (cargoVisible) return cargoConPersona(cargoVisible);
+
+  const cargoGuardado = state.cargos.find((cargo) => (
+    cargo.mes === mes &&
+    mismaPersona(cargo.persona_id, personaId) &&
+    cargoEsVigente(cargo)
+  ));
+  return cargoGuardado ? cargoConPersona(cargoGuardado) : null;
+}
+
 function renderPagos() {
   const selectedConcepto = byId('filtro-pago-concepto').value;
   byId('pago-concepto').innerHTML = conceptoOptions('PAGO_COMPLETO_MES', { includePagoCompleto: true });
@@ -1104,10 +1385,11 @@ function estadoCuentaCargo(cargo) {
   const pagadoEquipoMes = pagosPersonaMesConceptos(cargo.persona_id, cargo.mes, ['COMPRA_INICIAL', 'REGULARIZACION']);
   const pagadoAbonoMes = pagosPersonaMes(cargo.persona_id, cargo.mes, 'ABONO');
   const totalAjuste = pagosPersonaMes(cargo.persona_id, cargo.mes, 'AJUSTE');
-  const equipoDelMes = round2(Math.max(0, Number(cargo.cargo_equipo ?? cargo.regularizacion_aplicada ?? 0), pagadoEquipoMes));
-  const abonoDelMes = round2(Math.max(0, Number(cargo.abono_base || 0), pagadoAbonoMes));
+  const equipoDelMes = round2(Math.max(0, Number(cargo.cargo_equipo ?? cargo.regularizacion_aplicada ?? 0)));
+  const abonoDelMes = round2(Math.max(0, Number(cargo.abono_base || 0)));
   const compensacionAplicada = round2(Math.max(0, Number(cargo.compensacion_aplicada || 0)));
-  const totalDelMes = round2(Math.max(equipoDelMes + abonoDelMes - compensacionAplicada, 0));
+  const totalCalculado = round2(Math.max(equipoDelMes + abonoDelMes - compensacionAplicada, 0));
+  const totalDelMes = round2(Math.max(Number(cargo.monto_a_pagar ?? totalCalculado), 0));
   const pagadoSinAjuste = round2(pagadoEquipoMes + pagadoAbonoMes);
   const pagado = round2(pagadoSinAjuste + totalAjuste);
   const pendiente = pagadoSinAjuste + 0.01 >= totalDelMes ? 0 : round2(Math.max(totalDelMes - pagadoSinAjuste, 0));
@@ -1212,6 +1494,22 @@ function estadoCuentaDesdePagos(personaId, mes) {
     saldoAFavor: totalAjuste > 0.01 ? totalAjuste : 0,
     estado,
     observacion: observaciones.join(' ')
+  };
+}
+
+function estadoCuentaSinCargo() {
+  return {
+    pagadoEquipoMes: 0,
+    pagadoAbonoMes: 0,
+    equipoDelMes: 0,
+    abonoDelMes: 0,
+    totalDelMes: 0,
+    pagado: 0,
+    totalAjuste: 0,
+    pendiente: 0,
+    saldoAFavor: 0,
+    estado: 'Sin cargo',
+    observacion: 'Sin cargo mensual para este mes.'
   };
 }
 
@@ -1484,6 +1782,7 @@ async function bootAuthenticated(session) {
 async function boot() {
   byId('dashboard-mes').value = currentMonth();
   byId('panel-mes').value = currentMonth();
+  byId('cierre-mes').value = currentMonth();
   byId('mi-cuenta-mes').value = currentMonth();
   byId('calculo-mes').value = currentMonth();
   byId('mensajes-mes').value = currentMonth();
@@ -1552,6 +1851,8 @@ function bindEvents() {
   byId('dashboard-mes').addEventListener('change', renderDashboard);
   byId('panel-mes').addEventListener('change', renderPanelMensual);
   byId('panel-mensual-content').addEventListener('click', handlePanelMensualAction);
+  byId('cierre-mes').addEventListener('change', renderCierreMensual);
+  byId('cierre-mensual-content').addEventListener('click', handleCierreMensualAction);
   byId('mi-cuenta-mes').addEventListener('change', renderMiCuenta);
   byId('router-mes').addEventListener('change', renderRouter);
   byId('filtro-pago-persona').addEventListener('change', renderPagos);
@@ -1712,32 +2013,59 @@ async function handleComprobantePagoSubmit(event) {
 
   if (!isAdmin()) return setError('Solo ADMIN puede registrar pagos desde comprobantes.');
 
-  const raw = formToObject(event.target);
+  const form = event.target;
+  const submitButton = form.querySelector('button[type="submit"]');
+  const raw = formToObject(form);
+  if (state.comprobantesPagoEnProceso.has(raw.comprobante_id)) {
+    return setError('Este comprobante ya se esta procesando.');
+  }
+
+  state.comprobantesPagoEnProceso.add(raw.comprobante_id);
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = 'Registrando...';
+  }
+
   const comprobante = state.comprobantes.find((item) => item.id === raw.comprobante_id);
-  if (!comprobante) return setError('No se encontro el comprobante.');
-  if ((comprobante.estado || 'PENDIENTE') !== 'PENDIENTE') {
-    return setError('Solo se pueden procesar comprobantes pendientes.');
-  }
-  if (!comprobante.persona_id || !comprobante.mes_aplicado) {
-    return setError('El comprobante no tiene persona o mes aplicado valido.');
-  }
-
-  const monto = normalizeNumber(raw.monto);
-  if (!Number.isFinite(monto) || monto <= 0) {
-    return setError('El monto a registrar no es valido.');
-  }
-
-  const persona = state.personas.find((item) => mismaPersona(item.id, comprobante.persona_id));
-  const mensaje = `Registrar pago de ${formatARS(monto)} para ${persona?.nombre || 'esta persona'} en ${comprobante.mes_aplicado}?`;
-  if (!confirm(mensaje)) return;
+  let mantenerBloqueo = false;
 
   try {
+    if (!comprobante) throw new Error('No se encontro el comprobante.');
+    if ((comprobante.estado || 'PENDIENTE') !== 'PENDIENTE') {
+      throw new Error('Solo se pueden procesar comprobantes pendientes.');
+    }
+    if (!comprobante.persona_id || !comprobante.mes_aplicado) {
+      throw new Error('El comprobante no tiene persona o mes aplicado valido.');
+    }
+
+    const monto = normalizeNumber(raw.monto);
+    if (!Number.isFinite(monto) || monto <= 0) {
+      throw new Error('El monto a registrar no es valido.');
+    }
+
+    const persona = state.personas.find((item) => mismaPersona(item.id, comprobante.persona_id));
+    const mensaje = `Registrar pago de ${formatARS(monto)} para ${persona?.nombre || 'esta persona'} en ${comprobante.mes_aplicado}?`;
+    if (!confirm(mensaje)) return;
+
     setLoading('Registrando pago desde comprobante...');
+    const { data: comprobanteActual, error: comprobanteError } = await state.supabase
+      .from('comprobantes_pago')
+      .select('id, persona_id, mes_aplicado, archivo_nombre, estado, pago_ids')
+      .eq('id', comprobante.id)
+      .single();
+    if (comprobanteError) throw comprobanteError;
+    if ((comprobanteActual.estado || 'PENDIENTE') !== 'PENDIENTE') {
+      throw new Error('El comprobante ya no esta PENDIENTE. No se insertaron pagos.');
+    }
+    if (comprobantePagoIds(comprobanteActual).length > 0) {
+      throw new Error('El comprobante ya tiene pagos asociados. No se insertaron pagos.');
+    }
+
     const observaciones = raw.observaciones?.trim()
-      || `Registrado desde comprobante ${comprobante.archivo_nombre || comprobante.id}`;
+      || `Registrado desde comprobante ${comprobanteActual.archivo_nombre || comprobante.id}`;
     const pagosCreados = await registrarPagoCompletoMes({
-      personaId: comprobante.persona_id,
-      mes: comprobante.mes_aplicado,
+      personaId: comprobanteActual.persona_id,
+      mes: comprobanteActual.mes_aplicado,
       monto,
       fechaPago: raw.fecha_pago,
       medio: raw.medio || 'TRANSFERENCIA',
@@ -1757,6 +2085,7 @@ async function handleComprobantePagoSubmit(event) {
       .select('id')
       .single();
     if (updateError) {
+      mantenerBloqueo = true;
       throw new Error(`Los pagos se crearon, pero no se pudo marcar el comprobante como PROCESADO: ${updateError.message}`);
     }
 
@@ -1766,6 +2095,14 @@ async function handleComprobantePagoSubmit(event) {
     setOk('Pago registrado y comprobante marcado como PROCESADO.');
   } catch (error) {
     setError(error);
+  } finally {
+    if (!mantenerBloqueo) {
+      state.comprobantesPagoEnProceso.delete(raw.comprobante_id);
+      if (submitButton) {
+        submitButton.disabled = false;
+        submitButton.textContent = 'Confirmar y registrar pago';
+      }
+    }
   }
 }
 
@@ -1866,6 +2203,45 @@ function handlePanelMensualAction(event) {
     byId('router-mes').value = mes;
     setSection('router');
     renderRouter();
+    return;
+  }
+  if (targetSection === 'personas') {
+    setSection('personas');
+  }
+}
+
+function handleCierreMensualAction(event) {
+  const targetSection = event.target.dataset.cierreNav;
+  if (!targetSection) return;
+
+  const mes = cierreMonth();
+  if (targetSection === 'exportacion') {
+    byId('export-mes').value = mes;
+    setSection('exportacion');
+    return;
+  }
+  if (targetSection === 'comprobantes') {
+    state.comprobantesFiltro = 'PENDIENTE';
+    setSection('comprobantes');
+    renderComprobantes();
+    return;
+  }
+  if (targetSection === 'pagos') {
+    byId('filtro-pago-mes').value = mes;
+    setSection('pagos');
+    renderPagos();
+    return;
+  }
+  if (targetSection === 'router') {
+    byId('router-mes').value = mes;
+    setSection('router');
+    renderRouter();
+    return;
+  }
+  if (targetSection === 'mensajes') {
+    byId('mensajes-mes').value = mes;
+    setSection('mensajes');
+    renderMensajes();
     return;
   }
   if (targetSection === 'personas') {
@@ -2461,23 +2837,8 @@ function exportBackupMensual() {
 
 function exportPagosMes() {
   const mes = exportMonth();
-  const personasPorId = new Map(state.personas.map((persona) => [String(persona.id), persona]));
   const pagosMes = state.pagos.filter((pago) => pago.mes_aplicado === mes);
-  downloadCsv(`pagos-${mes}.csv`, [
-    ['fecha_pago', 'mes_aplicado', 'persona', 'concepto', 'monto', 'medio', 'observaciones'],
-    ...pagosMes.map((pago) => {
-      const persona = personasPorId.get(String(pago.persona_id));
-      return [
-        pago.fecha_pago,
-        pago.mes_aplicado,
-        persona?.nombre || '',
-        pago.concepto,
-        pago.monto,
-        pago.medio,
-        pago.observaciones
-      ];
-    })
-  ]);
+  exportPagos(pagosMes, `pagos-${mes}.csv`);
 }
 
 function exportComprobantesMes() {
@@ -2504,17 +2865,79 @@ function exportComprobantesMes() {
 }
 
 function exportPagos(pagos, filename) {
-  downloadCsv(filename, [
-    ['id', 'persona_id', 'fecha_pago', 'monto', 'concepto', 'mes_aplicado', 'medio', 'observaciones'],
-    ...pagos.map((pago) => [
-      pago.id,
+  const personasPorId = new Map(state.personas.map((persona) => [String(persona.id), persona]));
+  const grupos = new Map();
+
+  for (const pago of pagos || []) {
+    if (pago.concepto === 'PAGO_COMPLETO_MES') continue;
+    const createdAtSegundo = pago.created_at ? new Date(pago.created_at).toISOString().slice(0, 19) : '';
+    const fallbackObservacion = createdAtSegundo ? '' : String(pago.observaciones || '');
+    const clave = [
       pago.persona_id,
       pago.fecha_pago,
-      pago.monto,
-      pago.concepto,
       pago.mes_aplicado,
-      pago.medio,
-      pago.observaciones
+      pago.medio || '',
+      createdAtSegundo,
+      fallbackObservacion
+    ].join('|');
+    if (!grupos.has(clave)) {
+      grupos.set(clave, {
+        persona_id: pago.persona_id,
+        fecha_pago: pago.fecha_pago,
+        mes_aplicado: pago.mes_aplicado,
+        medio: pago.medio || '',
+        equipo: 0,
+        abono: 0,
+        ajuste: 0,
+        observaciones: new Set()
+      });
+    }
+    const grupo = grupos.get(clave);
+    const monto = Number(pago.monto || 0);
+    if (['COMPRA_INICIAL', 'REGULARIZACION'].includes(pago.concepto)) {
+      grupo.equipo = round2(grupo.equipo + monto);
+    } else if (pago.concepto === 'ABONO') {
+      grupo.abono = round2(grupo.abono + monto);
+    } else if (pago.concepto === 'AJUSTE') {
+      grupo.ajuste = round2(grupo.ajuste + monto);
+    }
+    if (pago.observaciones) grupo.observaciones.add(pago.observaciones);
+  }
+
+  const filas = Array.from(grupos.values())
+    .map((grupo) => {
+      const persona = personasPorId.get(String(grupo.persona_id));
+      const total = round2(grupo.equipo + grupo.abono + grupo.ajuste);
+      return {
+        nombre: persona?.nombre || '',
+        fecha_pago: grupo.fecha_pago || '',
+        total,
+        equipo: grupo.equipo,
+        abono: grupo.abono,
+        ajuste: grupo.ajuste,
+        mes_aplicado: grupo.mes_aplicado || '',
+        medio: grupo.medio,
+        observaciones: Array.from(grupo.observaciones).join(' | ')
+      };
+    })
+    .sort((a, b) => (
+      a.nombre.localeCompare(b.nombre) ||
+      a.fecha_pago.localeCompare(b.fecha_pago) ||
+      a.mes_aplicado.localeCompare(b.mes_aplicado)
+    ));
+
+  downloadCsv(filename, [
+    ['Nombre', 'Fecha de pago', 'Total pagado', 'Equipo', 'Abono', 'Ajuste', 'Mes aplicado', 'Medio', 'Observaciones'],
+    ...filas.map((fila) => [
+      fila.nombre,
+      fila.fecha_pago,
+      fila.total,
+      fila.equipo,
+      fila.abono,
+      fila.ajuste,
+      fila.mes_aplicado,
+      fila.medio,
+      fila.observaciones
     ])
   ]);
 }

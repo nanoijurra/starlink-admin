@@ -51,6 +51,7 @@
         <nav class="tabs" aria-label="Secciones">
           <button type="button" data-section="dashboard" class="active">Dashboard</button>
           <button type="button" data-section="panel-mensual">Panel mensual</button>
+          <button type="button" data-section="cierre-mensual">Cierre mensual</button>
           <button type="button" data-section="mi-cuenta">Mi cuenta</button>
           <button type="button" data-section="config">Configuracion</button>
           <button type="button" data-section="usuarios">Usuarios</button>
@@ -81,6 +82,17 @@
             <label class="month-inline">Mes <input type="month" id="panel-mes"></label>
           </div>
           <div id="panel-mensual-content"></div>
+        </section>
+
+        <section id="cierre-mensual" class="view">
+          <div class="section-title">
+            <div>
+              <h2>Cierre mensual</h2>
+              <p class="muted">Checklist operativo de solo lectura. No bloquea ni modifica datos.</p>
+            </div>
+            <label class="month-inline">Mes <input type="month" id="cierre-mes"></label>
+          </div>
+          <div id="cierre-mensual-content"></div>
         </section>
 
         <section id="mi-cuenta" class="view">

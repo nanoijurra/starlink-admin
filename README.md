@@ -127,6 +127,12 @@ El panel no registra pagos, no modifica comprobantes y no cambia el router. Solo
 
 La sección `Exportación` contiene solo descargas CSV. Además de exportaciones generales de personas, pagos y cargos, permite generar un backup operativo mensual con una fila por persona activa, pagos del mes y comprobantes del mes. Estas exportaciones son solo lectura y usan el mes seleccionado en la sección.
 
+## Checklist de cierre mensual
+
+`Cierre mensual` es una guia operativa de solo lectura para `ADMIN` y `LECTURA`. No cierra el mes de forma irreversible, no bloquea modificaciones, no registra pagos, no cambia comprobantes y no cambia router.
+
+Sirve para revisar comprobantes pendientes, pagos pendientes, pagos parciales, alertas de router, personas sin MAC, backup mensual y mensajes de cobro antes de considerar el mes cerrado operativamente.
+
 ## Pagos
 
 Conceptos reales guardados:
