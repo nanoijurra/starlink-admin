@@ -81,6 +81,7 @@ const state = {
   comprobanteProcesandoId: null,
   comprobantesPagoEnProceso: new Set(),
   calculo: null,
+  calculosRpcRaw: {},
   calculosRpc: {}
 };
 
@@ -213,6 +214,7 @@ async function loadData() {
   state.cargos = cargos.data || [];
   state.profiles = profiles.data || [];
   state.comprobantes = comprobantes.data || [];
+  state.calculosRpcRaw = {};
   state.calculosRpc = {};
 
   renderAll();
@@ -305,18 +307,23 @@ function cierreMonth() {
 function cuentaOperativaPersona(persona, mes) {
   const cargo = cargoMensualPersona(persona.id, mes);
   const cuenta = cargo ? estadoCuentaCargo(cargo) : estadoCuentaDesdePagos(persona.id, mes);
+  return cuentaOperativaDesdeCuenta(persona, mes, cargo, cuenta);
+}
+
+function cuentaOperativaDesdeCuenta(persona, mes, cargo, cuenta) {
   const pagosDelMes = pagosExistentesPersonaMes(persona.id, mes);
   const tieneMac = macsPersona(persona).length > 0;
   const routerEstado = persona.router_estado || 'BLOQUEADO';
-  const conDeuda = cuenta.pendiente > 0.01;
-  const alDia = cuenta.pendiente <= 0.01 && cuenta.estado !== 'Sin cargo';
-  const pagoParcial = pagosDelMes.length > 0 && conDeuda;
-  const saldoFavorVisual = round2(Math.max(
-    Number(cuenta.saldoAFavor || 0),
-    Number(cargo?.saldo_compensatorio || 0),
-    Number(cargo?.compensacion_aplicada || 0)
-  ));
-  const saldoAFavor = saldoFavorVisual > 0.01 || cuenta.totalAjuste > 0.01;
+  const estado = cuenta.estado || 'Sin cargo';
+  const pendiente = round2(Number(cuenta.pendiente || 0));
+  const pagado = round2(Number(cuenta.pagado || 0));
+  const totalDelMes = round2(Number(cuenta.totalDelMes || 0));
+  const conDeuda = pendiente > 0.01;
+  const sinCargo = estado === 'Sin cargo' || (totalDelMes <= 0.01 && pagado <= 0.01);
+  const alDia = !conDeuda && !sinCargo;
+  const pagoParcial = estado === 'Parcial';
+  const saldoFavorVisual = round2(Number(cuenta.saldoAFavor || cuenta.totalAjuste || 0));
+  const saldoAFavor = saldoFavorVisual > 0.01;
   const pagadoYBloqueado = alDia && routerEstado === 'BLOQUEADO';
   const debeYHabilitado = conDeuda && routerEstado === 'HABILITADO';
   const sinMac = !tieneMac;
@@ -339,6 +346,15 @@ function cuentaOperativaPersona(persona, mes) {
     sinMac,
     sinProblemaOperativo
   };
+}
+
+function cuentaOperativaDesdeCargo(cargo) {
+  return cuentaOperativaDesdeCuenta(cargo.persona, cargo.mes, cargo, estadoCuentaCargo(cargo));
+}
+
+async function cuentasOperativasDelMes(mes) {
+  const calculo = await obtenerCalculoMensualEstado(mes);
+  return (calculo.cargos || []).map(cuentaOperativaDesdeCargo);
 }
 
 function panelMetricCard(label, value, detail, tone, section = '') {
@@ -498,7 +514,7 @@ function renderAlertasRouter(cuentas) {
   `;
 }
 
-function renderPanelMensual() {
+async function renderPanelMensual() {
   const container = byId('panel-mensual-content');
   if (!container) return;
 
@@ -508,13 +524,20 @@ function renderPanelMensual() {
   }
 
   const mes = panelMonth();
-  const personasActivas = state.personas.filter((persona) => persona.estado === 'ACTIVO');
-  const cuentas = personasActivas.map((persona) => cuentaOperativaPersona(persona, mes));
+  let cuentas = [];
+  try {
+    cuentas = await cuentasOperativasDelMes(mes);
+  } catch (error) {
+    container.innerHTML = '<p class="notice" data-type="error">No se pudo calcular el panel mensual.</p>';
+    setError(error);
+    return;
+  }
   const comprobantesPendientes = state.comprobantes.filter((comprobante) => (
     (comprobante.estado || 'PENDIENTE') === 'PENDIENTE' &&
     comprobante.mes_aplicado === mes
   ));
-  const alDia = cuentas.filter((item) => item.sinProblemaOperativo);
+  const alDia = cuentas.filter((item) => item.alDia);
+  const sinProblemaOperativo = cuentas.filter((item) => item.sinProblemaOperativo);
   const conDeuda = cuentas.filter((item) => item.conDeuda);
   const parciales = cuentas.filter((item) => item.pagoParcial);
   const saldoFavor = cuentas.filter((item) => item.saldoAFavor);
@@ -527,14 +550,15 @@ function renderPanelMensual() {
   container.innerHTML = `
     <div class="summary-line">
       <span>Mes operativo: <strong>${escapeHtml(mes)}</strong></span>
-      <span>Personas activas: <strong>${personasActivas.length}</strong></span>
+      <span>Personas activas: <strong>${cuentas.length}</strong></span>
     </div>
     <div class="panel-metric-grid">
       ${panelMetricCard('Comprobantes pendientes', String(comprobantesPendientes.length), 'Requieren revision ADMIN', 'warning', 'comprobantes')}
-      ${panelMetricCard('Personas al dia', String(alDia.length), 'Sin pendiente ni problema operativo', 'ok')}
+      ${panelMetricCard('Personas al dia', String(alDia.length), 'Pendiente $0 segun estado mensual', 'ok')}
       ${panelMetricCard('Personas con deuda', String(conDeuda.length), `Total pendiente ${formatARS(totalPendiente)}`, 'danger', 'pagos')}
       ${panelMetricCard('Pagos parciales', String(parciales.length), 'Tienen pago y saldo pendiente', 'warning', 'pagos')}
       ${panelMetricCard('Saldo a favor', String(saldoFavor.length), `Total ${formatARSNegativoVisual(totalSaldoFavor)}`, 'ok')}
+      ${panelMetricCard('Sin problema operativo', String(sinProblemaOperativo.length), 'Al dia, con MAC y router coherente', 'ok')}
       ${panelMetricCard('Pago y bloqueado', String(pagadoYBloqueado.length), 'Accion sugerida: habilitar MAC', 'warning', 'router')}
       ${panelMetricCard('Debe y habilitado', String(debeYHabilitado.length), 'Accion sugerida: bloquear MAC', 'danger', 'router')}
       ${panelMetricCard('Personas sin MAC', String(sinMac.length), 'Accion sugerida: pedir/cargar MAC', 'neutral', 'personas')}
@@ -576,7 +600,7 @@ function cierreDetalleTable(titulo, headers, rows, emptyText) {
   `;
 }
 
-function renderCierreMensual() {
+async function renderCierreMensual() {
   const container = byId('cierre-mensual-content');
   if (!container) return;
 
@@ -586,8 +610,14 @@ function renderCierreMensual() {
   }
 
   const mes = cierreMonth();
-  const personasActivas = state.personas.filter((persona) => persona.estado === 'ACTIVO');
-  const cuentas = personasActivas.map((persona) => cuentaOperativaPersona(persona, mes));
+  let cuentas = [];
+  try {
+    cuentas = await cuentasOperativasDelMes(mes);
+  } catch (error) {
+    container.innerHTML = '<p class="notice" data-type="error">No se pudo calcular el checklist mensual.</p>';
+    setError(error);
+    return;
+  }
   const comprobantesMes = state.comprobantes.filter((comprobante) => comprobante.mes_aplicado === mes);
   const comprobantesPendientes = comprobantesMes.filter((comprobante) => (comprobante.estado || 'PENDIENTE') === 'PENDIENTE');
   const comprobantesDescartados = comprobantesMes.filter((comprobante) => comprobante.estado === 'DESCARTADO');
@@ -1217,6 +1247,36 @@ function normalizarMesClave(mes) {
   return String(mes || '').replace('/', '-');
 }
 
+function mesValido(mes) {
+  return MES_CIERRE_PATTERN.test(String(mes || ''));
+}
+
+function sumarMes(mes, delta) {
+  const [year, month] = String(mes || '').split('-').map(Number);
+  const date = new Date(year, month - 1 + delta, 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function mesesCuentaHasta(mesFin) {
+  const fin = normalizarMesClave(mesFin);
+  const meses = [
+    fin,
+    ...state.pagos.map((pago) => pago.mes_aplicado),
+    ...state.cargos.map((cargo) => cargo.mes),
+    ...state.cierres.map((cierre) => cierre.mes)
+  ]
+    .map(normalizarMesClave)
+    .filter((mes) => mesValido(mes) && mes <= fin)
+    .sort();
+
+  const inicio = meses[0] || fin;
+  const resultado = [];
+  for (let mes = inicio; mes <= fin; mes = sumarMes(mes, 1)) {
+    resultado.push(mes);
+  }
+  return resultado;
+}
+
 function obtenerPersonaIdFilaCalculo(fila) {
   return fila?.persona_id || fila?.personaId || fila?.persona?.id || fila?.id_persona || null;
 }
@@ -1320,14 +1380,115 @@ function calculoDesdeRpcRows(rows, mes) {
   };
 }
 
-async function obtenerCalculoMensualEstado(mes, force = false) {
+function clonarCalculo(calculo) {
+  return {
+    ...calculo,
+    cargos: (calculo.cargos || []).map((cargo) => ({
+      ...cargo,
+      persona: cargo.persona ? { ...cargo.persona } : cargo.persona,
+      __cuenta: cargo.__cuenta ? { ...cargo.__cuenta } : cargo.__cuenta
+    }))
+  };
+}
+
+function estadoCuentaCorriente({ totalDelMes, pagado, saldoAnterior, saldoFinal }) {
+  const disponibleInicial = round2(Math.max(Number(saldoAnterior || 0), 0) + Number(pagado || 0));
+  const pendiente = saldoFinal < -0.01 ? round2(Math.abs(saldoFinal)) : 0;
+  const saldoAFavor = saldoFinal > 0.01 ? round2(saldoFinal) : 0;
+
+  if (Number(totalDelMes || 0) <= 0.01 && Number(pagado || 0) <= 0.01 && Math.abs(Number(saldoAnterior || 0)) <= 0.01) {
+    return { estado: 'Sin cargo', pendiente: 0, saldoAFavor: 0 };
+  }
+  if (saldoAFavor > 0.01) {
+    return { estado: 'Saldo a favor', pendiente: 0, saldoAFavor };
+  }
+  if (pendiente <= 0.01) {
+    return { estado: 'Al dia', pendiente: 0, saldoAFavor: 0 };
+  }
+  if (disponibleInicial <= 0.01) {
+    return { estado: 'Pendiente', pendiente, saldoAFavor: 0 };
+  }
+  return { estado: 'Parcial', pendiente, saldoAFavor: 0 };
+}
+
+function aplicarCuentaCorrienteAlCargo(cargo, saldoAnterior) {
+  const cuentaBase = estadoCuentaCargo(cargo);
+  const totalDelMes = round2(Number(cuentaBase.totalDelMes || 0));
+  const pagado = round2(Number(cuentaBase.pagado || 0));
+  const saldoFinal = round2(Number(saldoAnterior || 0) + pagado - totalDelMes);
+  const estado = estadoCuentaCorriente({ totalDelMes, pagado, saldoAnterior, saldoFinal });
+
+  cargo.__saldo_anterior = round2(Number(saldoAnterior || 0));
+  cargo.__saldo_final = saldoFinal;
+  cargo.__cuenta = {
+    ...cuentaBase,
+    totalDelMes,
+    pagado,
+    totalAjuste: estado.saldoAFavor,
+    pendiente: estado.pendiente,
+    saldoAFavor: estado.saldoAFavor,
+    estado: estado.estado
+  };
+
+  if (estado.saldoAFavor > 0.01) {
+    cargo.__observacion = 'Saldo a favor disponible.';
+  } else if (estado.pendiente <= 0.01 && totalDelMes > 0.01) {
+    cargo.__observacion = Number(saldoAnterior || 0) > 0.01
+      ? 'Saldo a favor aplicado.'
+      : 'Cuota mensual registrada.';
+  } else if (estado.estado === 'Parcial') {
+    cargo.__observacion = 'Pago parcial registrado.';
+  } else if (estado.estado === 'Pendiente') {
+    cargo.__observacion = 'Cuota mensual pendiente.';
+  }
+
+  return saldoFinal;
+}
+
+async function aplicarCuentaCorrienteHastaMes(calculoFinal, force = false) {
+  const mesFinal = normalizarMesClave(calculoFinal.mes);
+  const meses = mesesCuentaHasta(mesFinal);
+  const saldosPorPersona = new Map();
+  let calculoAjustado = calculoFinal;
+
+  for (const mes of meses) {
+    const calculoMes = mes === mesFinal
+      ? calculoFinal
+      : await obtenerCalculoMensualEstadoBase(mes, force);
+
+    for (const cargo of calculoMes.cargos || []) {
+      const personaId = String(cargo.persona_id || '');
+      const saldoAnterior = saldosPorPersona.get(personaId) || 0;
+      const saldoFinal = aplicarCuentaCorrienteAlCargo(cargo, saldoAnterior);
+      saldosPorPersona.set(personaId, saldoFinal);
+    }
+
+    if (mes === mesFinal) {
+      calculoAjustado = calculoMes;
+    }
+  }
+
+  return calculoAjustado;
+}
+
+async function obtenerCalculoMensualEstadoBase(mes, force = false) {
   const mesClave = normalizarMesClave(mes || currentMonth());
-  if (!force && state.calculosRpc[mesClave]) return state.calculosRpc[mesClave];
+  if (!force && state.calculosRpcRaw[mesClave]) return clonarCalculo(state.calculosRpcRaw[mesClave]);
 
   const { data, error } = await state.supabase.rpc('get_calculo_mensual_estado', { p_mes: mesClave });
   if (error) throw error;
 
   const calculo = calculoDesdeRpcRows(data || [], mesClave);
+  state.calculosRpcRaw[mesClave] = calculo;
+  return clonarCalculo(calculo);
+}
+
+async function obtenerCalculoMensualEstado(mes, force = false) {
+  const mesClave = normalizarMesClave(mes || currentMonth());
+  if (!force && state.calculosRpc[mesClave]) return state.calculosRpc[mesClave];
+
+  const calculoBase = await obtenerCalculoMensualEstadoBase(mesClave, force);
+  const calculo = await aplicarCuentaCorrienteHastaMes(calculoBase, force);
   state.calculosRpc[mesClave] = calculo;
   return calculo;
 }
@@ -1751,16 +1912,20 @@ async function renderCalculo() {
   }
 }
 
-function cargosParaMensajes(mes) {
-  const cargosGuardados = state.cargos
-    .filter((cargo) => cargo.mes === mes && cargoEsVigente(cargo))
-    .map(cargoConPersona)
-    .filter((cargo) => cargo.persona);
-
-  if (cargosGuardados.length > 0) return cargosGuardados;
-
-  const calculo = calcularCargosMensuales(state.config, state.personas, state.pagos, mes);
-  return calculo.cargos;
+async function cargosParaMensajes(mes) {
+  const calculo = await obtenerCalculoMensualEstado(mes, true);
+  return (calculo.cargos || [])
+    .map((cargo) => {
+      const cuenta = estadoCuentaCargo(cargo);
+      return {
+        ...cargo,
+        monto_a_pagar: cuenta.pendiente,
+        __monto_total_mes: cuenta.totalDelMes,
+        __saldo_a_favor: cuenta.saldoAFavor,
+        __estado_cuenta: cuenta.estado
+      };
+    })
+    .filter((cargo) => cargo.persona && Number(cargo.monto_a_pagar || 0) > 0.01);
 }
 
 function renderMensajes() {
@@ -1835,6 +2000,53 @@ function routerItem(persona, mes) {
   };
 }
 
+function routerItemDesdeCuenta(item) {
+  const persona = item.persona;
+  const cuenta = item.cuenta;
+  const pagoCompleto = cuenta.pendiente <= 0.01 && cuenta.estado !== 'Sin cargo';
+  const routerEstado = item.routerEstado;
+  const macs = macsPersona(persona);
+  const tieneMac = macs.length > 0;
+
+  let prioridad = 5;
+  let titulo = 'Sin pago completo y bloqueado';
+  let descripcion = 'Sin accion de router pendiente.';
+
+  if (pagoCompleto && !tieneMac) {
+    prioridad = 3;
+    titulo = 'PAGO Y FALTA MAC';
+    descripcion = 'Pedir MAC antes de habilitar.';
+  } else if (pagoCompleto && routerEstado === 'BLOQUEADO' && tieneMac) {
+    prioridad = 1;
+    titulo = 'PAGO Y ESTA BLOQUEADO';
+    descripcion = 'Corresponde habilitar en el router.';
+  } else if (!pagoCompleto && routerEstado === 'HABILITADO' && tieneMac) {
+    prioridad = 2;
+    titulo = 'NO PAGO Y ESTA HABILITADO';
+    descripcion = 'Revisar y bloquear si corresponde.';
+  } else if (pagoCompleto && routerEstado === 'HABILITADO' && tieneMac) {
+    prioridad = 4;
+    titulo = 'Correcto';
+    descripcion = 'Pago completo, MAC cargada y router habilitado.';
+  }
+
+  return {
+    persona,
+    cargo: item.cargo,
+    mes: item.cargo?.mes || routerMonth(),
+    totalPagado: cuenta.pagado,
+    montoAPagar: cuenta.totalDelMes,
+    pendiente: cuenta.pendiente,
+    pagoCompleto,
+    routerEstado,
+    macs,
+    tieneMac,
+    prioridad,
+    titulo,
+    descripcion
+  };
+}
+
 function renderRouterActions(item) {
   const id = escapeHtml(item.persona.id);
   const macButtons = item.macs
@@ -1850,16 +2062,24 @@ function renderRouterActions(item) {
   return [adminActions, macButtons].filter(Boolean).join(' ');
 }
 
-function renderRouter() {
+async function renderRouter() {
   const mes = routerMonth();
   if (!mes) {
     byId('router-list').innerHTML = '<p class="muted">Seleccione o calcule un mes para gestionar el router.</p>';
     return;
   }
 
-  const items = state.personas
-    .filter((persona) => persona.estado === 'ACTIVO')
-    .map((persona) => routerItem(persona, mes))
+  let cuentas = [];
+  try {
+    cuentas = await cuentasOperativasDelMes(mes);
+  } catch (error) {
+    byId('router-list').innerHTML = '<p class="notice" data-type="error">No se pudo calcular la gestion router.</p>';
+    setError(error);
+    return;
+  }
+
+  const items = cuentas
+    .map(routerItemDesdeCuenta)
     .sort((a, b) => a.prioridad - b.prioridad || a.persona.nombre.localeCompare(b.persona.nombre));
 
   const resumen = {
@@ -1882,6 +2102,7 @@ function renderRouter() {
         <span>Mes <strong>${escapeHtml(item.mes)}</strong></span>
         <span>Total cargo <strong>${item.cargo ? formatARS(item.montoAPagar) : 'Sin cargo'}</strong></span>
         <span>Pagado <strong>${formatARS(item.totalPagado)}</strong></span>
+        <span>Pendiente <strong>${formatARS(item.pendiente)}</strong></span>
         <span>MAC <strong>${escapeHtml(item.macs.join(' / ') || 'Falta MAC')}</strong></span>
       </div>
       <p class="muted">${escapeHtml(item.descripcion)}</p>
@@ -2814,12 +3035,13 @@ async function closeMonth(event) {
   }
 }
 
-function generarMensajes() {
+async function generarMensajes() {
   try {
     const mes = byId('mensajes-mes').value;
     if (!mes) throw new Error('Selecciona un mes.');
+    const cargosMensajes = await cargosParaMensajes(mes);
     const mensajes = [
-      ...cargosParaMensajes(mes).map((cargo) => ({ persona: cargo.persona, cargo })),
+      ...cargosMensajes.map((cargo) => ({ persona: cargo.persona, cargo })),
       ...state.personas
         .filter((persona) => persona.estado === 'SUSPENDIDO_MORA')
         .map((persona) => ({ persona, cargo: null }))
@@ -2958,11 +3180,7 @@ function comprobantesEstadoCantidad(comprobantes, estado) {
   return comprobantes.filter((comprobante) => (comprobante.estado || 'PENDIENTE') === estado).length;
 }
 
-function backupMensualCsvRows(mes) {
-  const personasActivas = state.personas
-    .filter((persona) => persona.estado === 'ACTIVO')
-    .sort((a, b) => a.nombre.localeCompare(b.nombre));
-
+function backupMensualCsvRows(mes, cuentas) {
   return [
     [
       'mes',
@@ -2983,9 +3201,9 @@ function backupMensualCsvRows(mes) {
       'comprobantes_procesados',
       'comprobantes_descartados'
     ],
-    ...personasActivas.map((persona) => {
-      const cargo = buscarCargoAsociado(persona.id, mes);
-      const cuenta = cargo ? estadoCuentaCargo(cargo) : estadoCuentaDesdePagos(persona.id, mes);
+    ...cuentas.map((item) => {
+      const persona = item.persona;
+      const cuenta = item.cuenta;
       const pagosMes = pagosExistentesPersonaMes(persona.id, mes);
       const comprobantes = comprobantesPersonaMes(persona.id, mes);
       return [
@@ -3011,9 +3229,14 @@ function backupMensualCsvRows(mes) {
   ];
 }
 
-function exportBackupMensual() {
+async function exportBackupMensual() {
   const mes = exportMonth();
-  downloadCsv(`backup-mensual-${mes}.csv`, backupMensualCsvRows(mes));
+  try {
+    const cuentas = await cuentasOperativasDelMes(mes);
+    downloadCsv(`backup-mensual-${mes}.csv`, backupMensualCsvRows(mes, cuentas));
+  } catch (error) {
+    setError(error);
+  }
 }
 
 function exportPagosMes() {
@@ -3131,17 +3354,10 @@ function exportPagos(pagos, filename) {
   downloadCsv(filename, pagosCsvRows(pagos));
 }
 
-function cuentasOperativasMes(mes) {
-  return state.personas
-    .filter((persona) => persona.estado === 'ACTIVO')
-    .sort((a, b) => a.nombre.localeCompare(b.nombre))
-    .map((persona) => cuentaOperativaPersona(persona, mes));
-}
-
-function estadoCuentaCsvRows(mes) {
+function estadoCuentaCsvRows(mes, cuentas) {
   return [
     ['mes', 'persona', 'dependencia', 'equipo_mes', 'abono_mes', 'total_mes', 'pagado', 'ajuste_saldo_favor', 'pendiente_hoy', 'estado', 'observacion'],
-    ...cuentasOperativasMes(mes).map((item) => [
+    ...cuentas.map((item) => [
       mes,
       item.persona.nombre,
       item.persona.dependencia,
@@ -3164,10 +3380,10 @@ function accionRouterSugerida(item) {
   return 'Sin accion sugerida.';
 }
 
-function routerMacCsvRows(mes) {
+function routerMacCsvRows(mes, cuentas) {
   return [
     ['mes', 'persona', 'dependencia', 'router_estado', 'mac_1', 'mac_2', 'estado_cuenta', 'pendiente_hoy', 'accion_sugerida'],
-    ...cuentasOperativasMes(mes).map((item) => [
+    ...cuentas.map((item) => [
       mes,
       item.persona.nombre,
       item.persona.dependencia,
@@ -3181,10 +3397,10 @@ function routerMacCsvRows(mes) {
   ];
 }
 
-function deudoresCsvRows(mes) {
+function deudoresCsvRows(mes, cuentas) {
   return [
     ['mes', 'persona', 'dependencia', 'total_mes', 'pagado', 'pendiente_hoy', 'estado'],
-    ...cuentasOperativasMes(mes)
+    ...cuentas
       .filter((item) => item.conDeuda)
       .map((item) => [
         mes,
@@ -3222,10 +3438,10 @@ function comprobantesPendientesCsvRows(mes) {
   ];
 }
 
-function saldoFavorCsvRows(mes) {
+function saldoFavorCsvRows(mes, cuentas) {
   return [
     ['mes', 'persona', 'dependencia', 'total_mes', 'pagado', 'ajuste_saldo_favor', 'pendiente_hoy', 'estado'],
-    ...cuentasOperativasMes(mes)
+    ...cuentas
       .filter((item) => item.saldoAFavor)
       .map((item) => [
         mes,
@@ -3250,17 +3466,18 @@ async function generarPaqueteCierre() {
 
   try {
     const mes = cierreMonth();
+    const cuentas = await cuentasOperativasDelMes(mes);
     const pagosMes = state.pagos.filter((pago) => pago.mes_aplicado === mes);
     const zip = new JSZipCtor();
     const files = [
-      [`01_backup_mensual_${mes}.csv`, backupMensualCsvRows(mes)],
+      [`01_backup_mensual_${mes}.csv`, backupMensualCsvRows(mes, cuentas)],
       [`02_pagos_mes_${mes}.csv`, pagosCsvRows(pagosMes)],
       [`03_comprobantes_mes_${mes}.csv`, comprobantesMesCsvRows(mes)],
-      [`04_estado_cuenta_${mes}.csv`, estadoCuentaCsvRows(mes)],
-      [`05_router_mac_${mes}.csv`, routerMacCsvRows(mes)],
-      [`06_deudores_${mes}.csv`, deudoresCsvRows(mes)],
+      [`04_estado_cuenta_${mes}.csv`, estadoCuentaCsvRows(mes, cuentas)],
+      [`05_router_mac_${mes}.csv`, routerMacCsvRows(mes, cuentas)],
+      [`06_deudores_${mes}.csv`, deudoresCsvRows(mes, cuentas)],
       [`07_comprobantes_pendientes_${mes}.csv`, comprobantesPendientesCsvRows(mes)],
-      [`08_saldo_a_favor_${mes}.csv`, saldoFavorCsvRows(mes)],
+      [`08_saldo_a_favor_${mes}.csv`, saldoFavorCsvRows(mes, cuentas)],
       ['99_personas.csv', personasCsvRows()]
     ];
 
