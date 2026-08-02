@@ -1425,6 +1425,8 @@ function aplicarCuentaCorrienteAlCargo(cargo, saldoAnterior) {
     totalDelMes,
     pagado,
     totalAjuste: estado.saldoAFavor,
+    saldoAnterior: round2(Number(saldoAnterior || 0)),
+    saldoFinal,
     pendiente: estado.pendiente,
     saldoAFavor: estado.saldoAFavor,
     estado: estado.estado
@@ -1856,6 +1858,7 @@ function renderCargosTable(resultado, readonly = false) {
         <td class="number ${cuenta.equipoDelMes <= 0 ? 'money-muted' : ''}">${formatARS(cuenta.equipoDelMes)}</td>
         <td class="number ${cuenta.abonoDelMes <= 0 ? 'money-muted' : ''}">${formatARS(cuenta.abonoDelMes)}</td>
         <td class="number money-total">${formatARS(cuenta.totalDelMes)}</td>
+        <td class="number ${Number(cuenta.saldoAnterior || 0) < -0.01 ? 'pending-due' : Number(cuenta.saldoAnterior || 0) > 0.01 ? 'saldo-favor' : 'valor-cero'}">${Number(cuenta.saldoAnterior || 0) > 0.01 ? formatARSNegativoVisual(cuenta.saldoAnterior) : formatARS(Math.abs(Number(cuenta.saldoAnterior || 0)))}</td>
         <td class="number ${cuenta.pagado <= 0 ? 'money-muted' : 'money-paid'}">${formatARS(cuenta.pagado)}</td>
         <td class="number ${ajusteClass}">${formatARSNegativoVisual(ajusteSaldo)}</td>
         <td class="number pending-today ${cuenta.pendiente <= 0 ? 'pending-ok' : 'pending-due'}">${formatARS(cuenta.pendiente)}</td>
@@ -1880,6 +1883,7 @@ function renderCargosTable(resultado, readonly = false) {
           <th>Equipo del mes</th>
           <th>Abono del mes</th>
           <th>Total del mes</th>
+          <th>Saldo anterior</th>
           <th>Pagado</th>
           <th>Ajuste / saldo a favor</th>
           <th>Pendiente hoy</th>
@@ -1915,17 +1919,35 @@ async function renderCalculo() {
 async function cargosParaMensajes(mes) {
   const calculo = await obtenerCalculoMensualEstado(mes, true);
   return (calculo.cargos || [])
-    .map((cargo) => {
-      const cuenta = estadoCuentaCargo(cargo);
-      return {
-        ...cargo,
-        monto_a_pagar: cuenta.pendiente,
-        __monto_total_mes: cuenta.totalDelMes,
-        __saldo_a_favor: cuenta.saldoAFavor,
-        __estado_cuenta: cuenta.estado
-      };
-    })
+    .map(cargoPendienteParaMensaje)
     .filter((cargo) => cargo.persona && Number(cargo.monto_a_pagar || 0) > 0.01);
+}
+
+function cargoPendienteParaMensaje(cargo) {
+  const cuenta = estadoCuentaCargo(cargo);
+  const pendiente = round2(Number(cuenta.pendiente || 0));
+  const equipoDelMes = round2(Number(cuenta.equipoDelMes || cargo.cargo_equipo || 0));
+  const abonoDelMes = round2(Number(cuenta.abonoDelMes || cargo.abono_base || 0));
+  const cobertura = round2(Math.max(Number(cuenta.totalDelMes || 0) - pendiente, 0));
+  const equipoPendiente = round2(Math.max(equipoDelMes - cobertura, 0));
+  const coberturaRestante = round2(Math.max(cobertura - equipoDelMes, 0));
+  const abonoPendiente = round2(Math.max(abonoDelMes - coberturaRestante, 0));
+  const conceptoEquipo = equipoPendiente > 0.01 ? cargo.concepto_equipo : null;
+
+  return {
+    ...cargo,
+    abono_base: abonoPendiente,
+    cargo_equipo: equipoPendiente,
+    concepto_equipo: conceptoEquipo,
+    compra_inicial_aplicada: conceptoEquipo === 'COMPRA_INICIAL' ? equipoPendiente : 0,
+    regularizacion_aplicada: conceptoEquipo === 'REGULARIZACION' ? equipoPendiente : 0,
+    compensacion_aplicada: 0,
+    monto_a_pagar: pendiente,
+    __monto_total_mes: cuenta.totalDelMes,
+    __saldo_a_favor: cuenta.saldoAFavor,
+    __saldo_anterior: Number(cuenta.saldoAnterior || 0),
+    __estado_cuenta: cuenta.estado
+  };
 }
 
 function renderMensajes() {
