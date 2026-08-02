@@ -119,6 +119,10 @@ begin
       ), 0)::numeric as pagado_abono_mes,
       coalesce(sum(pg.monto) filter (
         where pg.concepto = 'AJUSTE'
+          and pg.mes_aplicado < v_mes
+      ), 0)::numeric as pagado_ajuste_previo,
+      coalesce(sum(pg.monto) filter (
+        where pg.concepto = 'AJUSTE'
           and pg.mes_aplicado = v_mes
       ), 0)::numeric as pagado_ajuste_mes
     from calculo_base cb
@@ -139,49 +143,63 @@ begin
       round(greatest(pc.equipo_objetivo - pc.pagado_equipo_previo, 0)::numeric, 2) as equipo_mes,
       round(pc.abono_mes::numeric, 2) as abono_mes_redondeado,
       round((pc.pagado_equipo_mes + pc.pagado_abono_mes + pc.pagado_ajuste_mes)::numeric, 2) as pagado,
-      round(pc.pagado_ajuste_mes::numeric, 2) as ajuste_saldo_favor
+      round(pc.pagado_ajuste_previo::numeric, 2) as ajuste_previo,
+      round(pc.pagado_ajuste_mes::numeric, 2) as ajuste_mes
     from pagos_calculados pc
   ),
   estado_calculado as (
     select
       i.*,
       round((i.equipo_mes + i.abono_mes_redondeado)::numeric, 2) as total_mes,
-      round(greatest(i.equipo_mes + i.abono_mes_redondeado - i.pagado_equipo_mes - i.pagado_abono_mes, 0)::numeric, 2) as pendiente_hoy,
+      round(greatest(i.equipo_mes + i.abono_mes_redondeado - i.pagado_equipo_mes - i.pagado_abono_mes, 0)::numeric, 2) as deuda_antes_ajuste,
+      round(least(
+        i.ajuste_previo,
+        greatest(i.equipo_mes + i.abono_mes_redondeado - i.pagado_equipo_mes - i.pagado_abono_mes, 0)
+      )::numeric, 2) as ajuste_aplicado,
       round((i.pagado_equipo_mes + i.pagado_abono_mes)::numeric, 2) as pagado_sin_ajuste
     from importes i
+  ),
+  final_calculado as (
+    select
+      ec.*,
+      round(greatest(ec.deuda_antes_ajuste - ec.ajuste_aplicado, 0)::numeric, 2) as pendiente_hoy,
+      round(greatest(ec.ajuste_previo + ec.ajuste_mes - ec.ajuste_aplicado, 0)::numeric, 2) as ajuste_saldo_favor,
+      round((ec.pagado_sin_ajuste + ec.ajuste_aplicado)::numeric, 2) as cobertura_mes
+    from estado_calculado ec
   )
   select
-    ec.persona_id,
-    ec.nombre,
-    ec.dependencia,
+    fc.persona_id,
+    fc.nombre,
+    fc.dependencia,
     v_mes as mes,
-    round(ec.equipo_mes::numeric, 2) as equipo_mes,
-    round(ec.abono_mes_redondeado::numeric, 2) as abono_mes,
-    round(ec.total_mes::numeric, 2) as total_mes,
-    round(ec.pagado::numeric, 2) as pagado,
-    round(ec.ajuste_saldo_favor::numeric, 2) as ajuste_saldo_favor,
-    round(ec.pendiente_hoy::numeric, 2) as pendiente_hoy,
+    round(fc.equipo_mes::numeric, 2) as equipo_mes,
+    round(fc.abono_mes_redondeado::numeric, 2) as abono_mes,
+    round(fc.total_mes::numeric, 2) as total_mes,
+    round(fc.pagado::numeric, 2) as pagado,
+    round(greatest(fc.ajuste_saldo_favor, fc.ajuste_aplicado)::numeric, 2) as ajuste_saldo_favor,
+    round(fc.pendiente_hoy::numeric, 2) as pendiente_hoy,
     case
-      when ec.total_mes <= 0.01 and ec.pagado <= 0.01 then 'SIN CARGO'
-      when ec.pendiente_hoy <= 0.01 and ec.ajuste_saldo_favor > 0.01 then 'SALDO A FAVOR'
-      when ec.pendiente_hoy <= 0.01 then 'AL DIA'
-      when ec.pendiente_hoy > 0.01 and ec.pagado_sin_ajuste <= 0.01 then 'PENDIENTE'
-      when ec.pendiente_hoy > 0.01 and ec.pagado_sin_ajuste > 0.01 then 'PARCIAL'
+      when fc.total_mes <= 0.01 and fc.pagado <= 0.01 then 'SIN CARGO'
+      when fc.pendiente_hoy <= 0.01 and fc.ajuste_saldo_favor > 0.01 then 'SALDO A FAVOR'
+      when fc.pendiente_hoy <= 0.01 then 'AL DIA'
+      when fc.pendiente_hoy > 0.01 and fc.cobertura_mes <= 0.01 then 'PENDIENTE'
+      when fc.pendiente_hoy > 0.01 and fc.cobertura_mes > 0.01 then 'PARCIAL'
       else 'SIN CARGO'
     end as estado,
     case
-      when ec.total_mes <= 0.01 and ec.pagado <= 0.01 then 'Sin cargo para este mes.'
-      when ec.pendiente_hoy <= 0.01 and ec.ajuste_saldo_favor > 0.01 then 'Saldo a favor registrado.'
-      when ec.pendiente_hoy <= 0.01 and ec.equipo_mes > 0.01 then 'Compra inicial / regularizacion + abono registrados.'
-      when ec.pendiente_hoy <= 0.01 then 'Cuota mensual registrada.'
-      when ec.pendiente_hoy > 0.01 and ec.pagado_sin_ajuste > 0.01 then 'Pago parcial registrado.'
+      when fc.total_mes <= 0.01 and fc.pagado <= 0.01 then 'Sin cargo para este mes.'
+      when fc.pendiente_hoy <= 0.01 and fc.ajuste_saldo_favor > 0.01 then 'Saldo a favor disponible.'
+      when fc.pendiente_hoy <= 0.01 and fc.ajuste_aplicado > 0.01 then 'Saldo a favor aplicado.'
+      when fc.pendiente_hoy <= 0.01 and fc.equipo_mes > 0.01 then 'Compra inicial / regularizacion + abono registrados.'
+      when fc.pendiente_hoy <= 0.01 then 'Cuota mensual registrada.'
+      when fc.pendiente_hoy > 0.01 and fc.cobertura_mes > 0.01 then 'Pago parcial registrado.'
       else 'Cuota mensual pendiente.'
     end as observacion,
-    ec.router_estado,
-    ec.mac_1,
-    ec.mac_2
-  from estado_calculado ec
-  order by ec.nombre;
+    fc.router_estado,
+    fc.mac_1,
+    fc.mac_2
+  from final_calculado fc
+  order by fc.nombre;
 end;
 $$;
 

@@ -2,7 +2,6 @@ import { createSupabaseClient, ensureUserProfile, getSession, signIn, signOut, s
 import {
   calcularCargosMensuales,
   calcularMoras,
-  resumenDashboard,
   totalAbonoActualizado,
   totalEquipoActualizado
 } from './calculos.js';
@@ -237,26 +236,53 @@ function renderAll() {
   renderMoras();
 }
 
-function renderDashboard() {
+async function renderDashboard() {
   const mes = byId('dashboard-mes').value || currentMonth();
-  const resumen = resumenDashboard(state.config, state.personas, state.pagos, state.cargos, mes);
-  const metrics = [
-    ['Usuarios activos', resumen.activos],
-    ['Fundadores activos', resumen.fundadoresActivos],
-    ['Ingresantes posteriores activos', resumen.ingresantesActivos],
-    ['Pendientes', resumen.pendientes],
-    ['Suspendidos por mora', resumen.suspendidos],
-    ['Bajas definitivas', resumen.bajas],
-    ['Total a recaudar del mes', formatARS(resumen.totalARecaudar)],
-    ['Total pagado', formatARS(resumen.totalPagado)],
-    ['Total pendiente', formatARS(resumen.totalPendiente)],
-    ['Equipo actualizado', formatARS(totalEquipoActualizado(state.config))],
-    ['Abono actualizado', formatARS(totalAbonoActualizado(state.config))]
+  const container = byId('dashboard-cards');
+  const activos = state.personas.filter((persona) => persona.estado === 'ACTIVO');
+  const metricsBase = [
+    ['Usuarios activos', activos.length],
+    ['Fundadores activos', activos.filter((persona) => persona.es_fundador).length],
+    ['Ingresantes posteriores activos', activos.filter((persona) => !persona.es_fundador).length],
+    ['Pendientes de vinculacion/alta', state.personas.filter((persona) => persona.estado === 'PENDIENTE').length],
+    ['Suspendidos por mora', state.personas.filter((persona) => persona.estado === 'SUSPENDIDO_MORA').length],
+    ['Bajas definitivas', state.personas.filter((persona) => persona.estado === 'BAJA_DEFINITIVA').length]
   ];
 
-  byId('dashboard-cards').innerHTML = metrics
-    .map(([label, value]) => `<article class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`)
-    .join('');
+  try {
+    const calculo = await obtenerCalculoMensualEstado(mes);
+    const cuentas = calculo.cargos.map((cargo) => estadoCuentaCargo(cargo));
+    const totalMes = round2(cuentas.reduce((total, cuenta) => total + Number(cuenta.totalDelMes || 0), 0));
+    const totalPagado = round2(cuentas.reduce((total, cuenta) => total + Number(cuenta.pagado || 0), 0));
+    const totalPendiente = round2(cuentas.reduce((total, cuenta) => total + Number(cuenta.pendiente || 0), 0));
+    const totalSaldoFavor = round2(cuentas.reduce((total, cuenta) => total + Number(cuenta.saldoAFavor || 0), 0));
+    const personasConDeuda = cuentas.filter((cuenta) => cuenta.pendiente > 0.01).length;
+    const personasAlDia = cuentas.filter((cuenta) => cuenta.pendiente <= 0.01 && cuenta.estado !== 'Sin cargo').length;
+    const personasSaldoFavor = cuentas.filter((cuenta) => cuenta.saldoAFavor > 0.01).length;
+
+    const metrics = [
+      ...metricsBase,
+      ['Total cargos del mes', formatARS(totalMes)],
+      ['Total pagado del mes', formatARS(totalPagado)],
+      ['Pendiente hoy', formatARS(totalPendiente)],
+      ['Saldo a favor', formatARSNegativoVisual(totalSaldoFavor)],
+      ['Personas con deuda', personasConDeuda],
+      ['Personas al dia', personasAlDia],
+      ['Personas con saldo a favor', personasSaldoFavor]
+    ];
+
+    container.innerHTML = metrics
+      .map(([label, value]) => `<article class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`)
+      .join('');
+  } catch (error) {
+    container.innerHTML = [
+      ...metricsBase,
+      ['Estado mensual', 'No disponible']
+    ]
+      .map(([label, value]) => `<article class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`)
+      .join('');
+    setError(error);
+  }
 }
 
 function panelMonth() {
@@ -1403,6 +1429,16 @@ function pagosPersonaMesConceptos(personaId, mes, conceptos) {
     .reduce((total, pago) => total + Number(pago.monto || 0), 0));
 }
 
+function pagosPersonaAntesMes(personaId, mes, concepto) {
+  return round2(state.pagos
+    .filter((pago) => (
+      mismaPersona(pago.persona_id, personaId) &&
+      pago.mes_aplicado < mes &&
+      pago.concepto === concepto
+    ))
+    .reduce((total, pago) => total + Number(pago.monto || 0), 0));
+}
+
 function estadoPorPago(pagado, requerido, noAplica = false) {
   if (noAplica) return 'No aplica';
   if (requerido <= 0.009) return 'Pagado';
@@ -1492,16 +1528,22 @@ function estadoCuentaCargo(cargo) {
 
   const pagadoEquipoMes = pagosPersonaMesConceptos(cargo.persona_id, cargo.mes, ['COMPRA_INICIAL', 'REGULARIZACION']);
   const pagadoAbonoMes = pagosPersonaMes(cargo.persona_id, cargo.mes, 'ABONO');
-  const totalAjuste = pagosPersonaMes(cargo.persona_id, cargo.mes, 'AJUSTE');
+  const ajusteMes = pagosPersonaMes(cargo.persona_id, cargo.mes, 'AJUSTE');
+  const ajustePrevio = pagosPersonaAntesMes(cargo.persona_id, cargo.mes, 'AJUSTE');
   const equipoDelMes = round2(Math.max(0, Number(cargo.cargo_equipo ?? cargo.regularizacion_aplicada ?? 0)));
   const abonoDelMes = round2(Math.max(0, Number(cargo.abono_base || 0)));
   const compensacionAplicada = round2(Math.max(0, Number(cargo.compensacion_aplicada || 0)));
   const totalCalculado = round2(Math.max(equipoDelMes + abonoDelMes - compensacionAplicada, 0));
   const totalDelMes = round2(Math.max(Number(cargo.monto_a_pagar ?? totalCalculado), 0));
   const pagadoSinAjuste = round2(pagadoEquipoMes + pagadoAbonoMes);
-  const pagado = round2(pagadoSinAjuste + totalAjuste);
-  const pendiente = pagadoSinAjuste + 0.01 >= totalDelMes ? 0 : round2(Math.max(totalDelMes - pagadoSinAjuste, 0));
-  const saldoAFavor = totalAjuste > 0.01 ? totalAjuste : 0;
+  const deudaAntesAjuste = round2(Math.max(totalDelMes - pagadoSinAjuste, 0));
+  const ajusteAplicado = round2(Math.min(ajustePrevio, deudaAntesAjuste));
+  const pendiente = deudaAntesAjuste - ajusteAplicado <= 0.01 ? 0 : round2(deudaAntesAjuste - ajusteAplicado);
+  const pagado = round2(pagadoSinAjuste + ajusteMes);
+  const totalAjuste = round2(Math.max(0, ajustePrevio + ajusteMes - ajusteAplicado));
+  const saldoAFavorVisual = round2(Math.max(totalAjuste, ajusteAplicado));
+  const saldoAFavor = saldoAFavorVisual > 0.01 ? saldoAFavorVisual : 0;
+  const coberturaMes = round2(pagadoSinAjuste + ajusteAplicado);
   let estado = 'Sin cargo';
 
   if (totalDelMes <= 0.01 && pagado <= 0.01) {
@@ -1510,7 +1552,7 @@ function estadoCuentaCargo(cargo) {
     estado = 'Saldo a favor';
   } else if (pendiente <= 0.01) {
     estado = 'Al dia';
-  } else if (pagadoSinAjuste <= 0.01) {
+  } else if (coberturaMes <= 0.01) {
     estado = 'Pendiente';
   } else {
     estado = 'Parcial';
@@ -1524,6 +1566,9 @@ function estadoCuentaCargo(cargo) {
     totalDelMes,
     pagado,
     totalAjuste,
+    ajustePrevio,
+    ajusteMes,
+    ajusteAplicado,
     pendiente,
     saldoAFavor,
     estado
@@ -1548,9 +1593,12 @@ function observacionEstadoCuenta(cargo, cuenta) {
   }
 
   if (cuenta.estado === 'Saldo a favor') {
-    return `${base} pagados. Saldo a favor: ${formatARSNegativoVisual(cuenta.saldoAFavor)}`;
+    return `${base}. Saldo a favor disponible: ${formatARSNegativoVisual(cuenta.saldoAFavor)}`;
   }
   if (cuenta.estado === 'Al dia') {
+    if (Number(cuenta.ajusteAplicado || 0) > 0) {
+      return `${base}. Saldo a favor aplicado`;
+    }
     return base === 'Cuota mensual' ? 'Cuota mensual pagada' : `${base} pagados`;
   }
   if (cuenta.estado === 'Parcial') {
