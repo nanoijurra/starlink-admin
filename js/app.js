@@ -1411,17 +1411,26 @@ function estadoCuentaCorriente({ totalDelMes, pagado, saldoAnterior, saldoFinal 
   return { estado: 'Parcial', pendiente, saldoAFavor: 0 };
 }
 
-function aplicarCuentaCorrienteAlCargo(cargo, saldoAnterior) {
+function aplicarCuentaCorrienteAlCargo(cargo, saldoAnterior, equipoDevengadoAnterior) {
   const cuentaBase = estadoCuentaCargo(cargo);
-  const totalDelMes = round2(Number(cuentaBase.totalDelMes || 0));
+  const equipoBaseDelMes = round2(Number(cuentaBase.equipoDelMes || 0));
+  const equipoDelMes = round2(Math.max(equipoBaseDelMes - Number(equipoDevengadoAnterior || 0), 0));
+  const abonoDelMes = round2(Number(cuentaBase.abonoDelMes || 0));
+  const totalDelMes = round2(equipoDelMes + abonoDelMes);
   const pagado = round2(Number(cuentaBase.pagado || 0));
   const saldoFinal = round2(Number(saldoAnterior || 0) + pagado - totalDelMes);
   const estado = estadoCuentaCorriente({ totalDelMes, pagado, saldoAnterior, saldoFinal });
 
+  cargo.cargo_equipo = equipoDelMes;
+  cargo.abono_base = abonoDelMes;
+  cargo.monto_a_pagar = totalDelMes;
+  cargo.concepto_equipo = equipoDelMes > 0.01 ? cargo.concepto_equipo : null;
   cargo.__saldo_anterior = round2(Number(saldoAnterior || 0));
   cargo.__saldo_final = saldoFinal;
   cargo.__cuenta = {
     ...cuentaBase,
+    equipoDelMes,
+    abonoDelMes,
     totalDelMes,
     pagado,
     totalAjuste: estado.saldoAFavor,
@@ -1451,6 +1460,7 @@ async function aplicarCuentaCorrienteHastaMes(calculoFinal, force = false) {
   const mesFinal = normalizarMesClave(calculoFinal.mes);
   const meses = mesesCuentaHasta(mesFinal);
   const saldosPorPersona = new Map();
+  const equipoDevengadoPorPersona = new Map();
   let calculoAjustado = calculoFinal;
 
   for (const mes of meses) {
@@ -1461,8 +1471,11 @@ async function aplicarCuentaCorrienteHastaMes(calculoFinal, force = false) {
     for (const cargo of calculoMes.cargos || []) {
       const personaId = String(cargo.persona_id || '');
       const saldoAnterior = saldosPorPersona.get(personaId) || 0;
-      const saldoFinal = aplicarCuentaCorrienteAlCargo(cargo, saldoAnterior);
+      const equipoDevengadoAnterior = equipoDevengadoPorPersona.get(personaId) || 0;
+      const equipoBaseDelMes = round2(Number(estadoCuentaCargo(cargo).equipoDelMes || 0));
+      const saldoFinal = aplicarCuentaCorrienteAlCargo(cargo, saldoAnterior, equipoDevengadoAnterior);
       saldosPorPersona.set(personaId, saldoFinal);
+      equipoDevengadoPorPersona.set(personaId, round2(Math.max(equipoDevengadoAnterior, equipoBaseDelMes)));
     }
 
     if (mes === mesFinal) {
@@ -1470,7 +1483,18 @@ async function aplicarCuentaCorrienteHastaMes(calculoFinal, force = false) {
     }
   }
 
+  recalcularTotalesCalculoCuentaCorriente(calculoAjustado);
   return calculoAjustado;
+}
+
+function recalcularTotalesCalculoCuentaCorriente(calculo) {
+  const cargos = calculo.cargos || [];
+  calculo.total_abono_base = round2(cargos.reduce((total, cargo) => total + Number(cargo.abono_base || 0), 0));
+  calculo.total_cargo_equipo = round2(cargos.reduce((total, cargo) => total + Number(cargo.cargo_equipo || 0), 0));
+  calculo.total_compensacion_aplicada = 0;
+  calculo.suma_cargos = round2(cargos.reduce((total, cargo) => total + Number(cargo.monto_a_pagar || 0), 0));
+  calculo.total_modelo = calculo.suma_cargos;
+  calculo.diferencia_redondeo = 0;
 }
 
 async function obtenerCalculoMensualEstadoBase(mes, force = false) {
