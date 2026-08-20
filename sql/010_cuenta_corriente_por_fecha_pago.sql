@@ -85,7 +85,7 @@ begin
     limit 1
   ),
   meses_base as (
-    select valor as mes
+    select datos.valor as mes
     from (
       select to_char(p.fecha_pago, 'YYYY-MM') as valor
       from public.pagos p
@@ -99,14 +99,14 @@ begin
       union all
       select v_mes as valor
     ) datos
-    where valor ~ '^[0-9]{4}-[0-9]{2}$'
+    where datos.valor ~ '^[0-9]{4}-[0-9]{2}$'
   ),
   primer_mes as (
-    select min(mes) as mes_inicio
-    from meses_base
+    select min(mb.mes) as mes_inicio
+    from meses_base mb
   ),
   meses as (
-    select to_char(mes_generado, 'YYYY-MM') as mes
+    select to_char(gs.mes_generado, 'YYYY-MM') as mes
     from primer_mes pm
     cross join generate_series(
       to_date(pm.mes_inicio || '-01', 'YYYY-MM-DD'),
@@ -123,11 +123,17 @@ begin
   ),
   personas_activas as (
     select
-      p.*,
+      p.id,
+      p.nombre,
+      p.dependencia,
+      p.es_fundador,
+      p.router_estado,
+      p.mac_1,
+      p.mac_2,
       coalesce(
         to_char(p.fecha_ingreso, 'YYYY-MM'),
         case
-          when p.es_fundador then (select mes_inicio from primer_mes)
+          when p.es_fundador then (select pm_inicio.mes_inicio from primer_mes pm_inicio)
           when pp.primer_pago_mes is not null then pp.primer_pago_mes
           else v_mes
         end
@@ -149,9 +155,9 @@ begin
     join personas_activas p on p.mes_inicio_participacion <= m.mes
   ),
   cantidad_mes as (
-    select mes, count(*)::numeric as usuarios_activos
-    from participantes_mes
-    group by mes
+    select pm.mes, count(*)::numeric as usuarios_activos
+    from participantes_mes pm
+    group by pm.mes
   ),
   cargos_mes as (
     select
@@ -171,7 +177,16 @@ begin
   ),
   cargos_con_delta as (
     select
-      cm.*,
+      cm.persona_id,
+      cm.nombre,
+      cm.dependencia,
+      cm.router_estado,
+      cm.mac_1,
+      cm.mac_2,
+      cm.mes,
+      cm.usuarios_activos,
+      cm.cuota_equipo_por_persona,
+      cm.cuota_abono_mes,
       round((
         cm.cuota_equipo_por_persona
         - coalesce(lag(cm.cuota_equipo_por_persona) over (partition by cm.persona_id order by cm.mes), 0)
@@ -224,7 +239,20 @@ begin
   ),
   pagos_reales as (
     select
-      rc.*,
+      rc.persona_id,
+      rc.nombre,
+      rc.dependencia,
+      rc.router_estado,
+      rc.mac_1,
+      rc.mac_2,
+      rc.usuarios_activos,
+      rc.cuota_equipo_por_persona,
+      rc.cuota_abono_mes,
+      rc.cargo_equipo_mes,
+      rc.cargo_abono_mes,
+      rc.total_cargos_mes,
+      rc.cargos_acumulados,
+      rc.cargos_acumulados_previos,
       round(coalesce(sum(p.monto) filter (
         where p.fecha_pago >= v_mes_inicio
           and p.fecha_pago <= v_mes_fin
@@ -255,7 +283,23 @@ begin
   ),
   cuenta as (
     select
-      pr.*,
+      pr.persona_id,
+      pr.nombre,
+      pr.dependencia,
+      pr.router_estado,
+      pr.mac_1,
+      pr.mac_2,
+      pr.usuarios_activos,
+      pr.cuota_equipo_por_persona,
+      pr.cuota_abono_mes,
+      pr.cargo_equipo_mes,
+      pr.cargo_abono_mes,
+      pr.total_cargos_mes,
+      pr.cargos_acumulados,
+      pr.cargos_acumulados_previos,
+      pr.pagos_del_mes,
+      pr.pagos_acumulados,
+      pr.pagos_previos,
       round((pr.pagos_previos - pr.cargos_acumulados_previos)::numeric, 2) as saldo_anterior,
       round((pr.pagos_acumulados - pr.cargos_acumulados)::numeric, 2) as saldo_actual,
       round(greatest(pr.cuota_equipo_por_persona - pr.pagos_acumulados, 0)::numeric, 2) as equipo_pendiente
@@ -263,7 +307,26 @@ begin
   ),
   final as (
     select
-      c.*,
+      c.persona_id,
+      c.nombre,
+      c.dependencia,
+      c.router_estado,
+      c.mac_1,
+      c.mac_2,
+      c.usuarios_activos,
+      c.cuota_equipo_por_persona,
+      c.cuota_abono_mes,
+      c.cargo_equipo_mes,
+      c.cargo_abono_mes,
+      c.total_cargos_mes,
+      c.cargos_acumulados,
+      c.cargos_acumulados_previos,
+      c.pagos_del_mes,
+      c.pagos_acumulados,
+      c.pagos_previos,
+      c.saldo_anterior,
+      c.saldo_actual,
+      c.equipo_pendiente,
       round(greatest(-c.saldo_actual, 0)::numeric, 2) as pendiente_hoy,
       round(greatest(c.saldo_anterior, 0)::numeric, 2) as saldo_a_favor_inicial,
       round(greatest(c.saldo_actual, 0)::numeric, 2) as saldo_a_favor_final
