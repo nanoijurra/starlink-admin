@@ -165,14 +165,12 @@
         <section id="pagos" class="view">
           <div class="section-title">
             <h2>Pagos</h2>
-            <p class="muted">Registro por persona, mes y concepto.</p>
+            <p class="muted">Registro por persona y fecha real de pago.</p>
           </div>
           <form id="pago-form" class="grid-form admin-only">
             <label>Persona <select name="persona_id" id="pago-persona" required></select></label>
-            <label>Fecha pago <input type="date" name="fecha_pago" required></label>
+            <label>Fecha real de pago <input type="date" name="fecha_pago" required></label>
             <label>Monto <input type="number" name="monto" min="0" step="0.01" required></label>
-            <label>Concepto <select name="concepto" id="pago-concepto" required></select></label>
-            <label>Mes aplicado <input type="month" name="mes_aplicado" required></label>
             <label>Medio <input type="text" name="medio" value="TRANSFERENCIA" required></label>
             <label class="wide">Observaciones <textarea name="observaciones" rows="2"></textarea></label>
             <button type="submit" class="primary">Registrar pago</button>

@@ -1,12 +1,10 @@
 import { createSupabaseClient, ensureUserProfile, getSession, signIn, signOut, signUp } from './auth.js';
 import {
   calcularCargosMensuales,
-  calcularMoras,
-  totalAbonoActualizado,
-  totalEquipoActualizado
+  calcularMoras
 } from './calculos.js';
 import { mensajePorCargo } from './mensajes.js';
-import { conceptoOptions, descomponerPagoSegunCargo, renderPagosTable } from './pagos.js';
+import { conceptoOptions, mesDesdeFechaPago, renderPagosTable } from './pagos.js';
 import { estadoOptions, personaOptions, renderPersonasTable } from './personas.js';
 import {
   byId,
@@ -81,7 +79,6 @@ const state = {
   comprobanteProcesandoId: null,
   comprobantesPagoEnProceso: new Set(),
   calculo: null,
-  calculosRpcRaw: {},
   calculosRpc: {}
 };
 
@@ -214,7 +211,6 @@ async function loadData() {
   state.cargos = cargos.data || [];
   state.profiles = profiles.data || [];
   state.comprobantes = comprobantes.data || [];
-  state.calculosRpcRaw = {};
   state.calculosRpc = {};
 
   renderAll();
@@ -934,9 +930,10 @@ function renderComprobantesPersona(personaId) {
 }
 
 function pagosExistentesPersonaMes(personaId, mes) {
+  const mesNormalizado = normalizarMesClave(mes || currentMonth());
   return state.pagos.filter((pago) => (
     mismaPersona(pago.persona_id, personaId) &&
-    pago.mes_aplicado === mes
+    mesDesdeFechaPago(pago.fecha_pago) === mesNormalizado
   ));
 }
 
@@ -1047,7 +1044,7 @@ async function renderMiCuenta() {
   const pagosRows = pagos.map((pago) => `
     <tr>
       <td>${escapeHtml(pago.fecha_pago || '')}</td>
-      <td>${escapeHtml(pago.mes_aplicado || '')}</td>
+      <td>${escapeHtml(mesDesdeFechaPago(pago.fecha_pago) || '')}</td>
       <td><span class="badge">${escapeHtml(pago.concepto || '')}</span></td>
       <td class="number">${formatARS(pago.monto || 0)}</td>
       <td>${escapeHtml(pago.observaciones || '')}</td>
@@ -1084,10 +1081,12 @@ async function renderMiCuenta() {
 
     <h3>Detalle del mes ${escapeHtml(mesCuenta)}</h3>
     <div class="account-grid">
-      <article class="metric"><span>Equipo a pagar</span><strong>${formatARS(cuenta.equipoDelMes)}</strong></article>
+      <article class="metric"><span>Equipo / ajuste equipo</span><strong>${formatARS(cuenta.equipoDelMes)}</strong></article>
       <article class="metric"><span>Abono del mes</span><strong>${formatARS(cuenta.abonoDelMes)}</strong></article>
-      <article class="metric"><span>Total del mes</span><strong>${formatARS(cuenta.totalDelMes)}</strong></article>
-      <article class="metric"><span>Pagado</span><strong>${formatARS(cuenta.pagado)}</strong></article>
+      <article class="metric"><span>Total cargos del mes</span><strong>${formatARS(cuenta.totalDelMes)}</strong></article>
+      <article class="metric"><span>Pagos del mes</span><strong>${formatARS(cuenta.pagado)}</strong></article>
+      <article class="metric"><span>Saldo anterior</span><strong>${cuenta.saldoAnterior > 0.01 ? formatARSNegativoVisual(cuenta.saldoAnterior) : formatARS(Math.abs(Number(cuenta.saldoAnterior || 0)))}</strong></article>
+      <article class="metric"><span>Saldo actual</span><strong>${cuenta.saldoActual > 0.01 ? formatARSNegativoVisual(cuenta.saldoActual) : formatARS(Math.abs(Number(cuenta.saldoActual || 0)))}</strong></article>
       <article class="metric"><span>Ajuste / saldo a favor</span><strong class="${cuenta.saldoAFavor > 0.01 ? 'saldo-favor' : 'valor-cero'}">${formatARSNegativoVisual(cuenta.saldoAFavor)}</strong></article>
       <article class="metric"><span>Pendiente hoy</span><strong class="${cuenta.pendiente <= 0.01 ? 'pending-ok' : 'pending-due'}">${formatARS(cuenta.pendiente)}</strong></article>
       <article class="metric"><span>Estado</span><strong>${escapeHtml(cuenta.estado)}</strong></article>
@@ -1233,7 +1232,7 @@ function pagosFiltrados() {
 
   return state.pagos.filter((pago) => {
     if (personaId && pago.persona_id !== personaId) return false;
-    if (mes && pago.mes_aplicado !== mes) return false;
+    if (mes && mesDesdeFechaPago(pago.fecha_pago) !== mes) return false;
     if (concepto && pago.concepto !== concepto) return false;
     return true;
   });
@@ -1249,32 +1248,6 @@ function normalizarMesClave(mes) {
 
 function mesValido(mes) {
   return MES_CIERRE_PATTERN.test(String(mes || ''));
-}
-
-function sumarMes(mes, delta) {
-  const [year, month] = String(mes || '').split('-').map(Number);
-  const date = new Date(year, month - 1 + delta, 1);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-}
-
-function mesesCuentaHasta(mesFin) {
-  const fin = normalizarMesClave(mesFin);
-  const meses = [
-    fin,
-    ...state.pagos.map((pago) => pago.mes_aplicado),
-    ...state.cargos.map((cargo) => cargo.mes),
-    ...state.cierres.map((cierre) => cierre.mes)
-  ]
-    .map(normalizarMesClave)
-    .filter((mes) => mesValido(mes) && mes <= fin)
-    .sort();
-
-  const inicio = meses[0] || fin;
-  const resultado = [];
-  for (let mes = inicio; mes <= fin; mes = sumarMes(mes, 1)) {
-    resultado.push(mes);
-  }
-  return resultado;
 }
 
 function obtenerPersonaIdFilaCalculo(fila) {
@@ -1315,13 +1288,19 @@ function filaRpcACargo(row) {
     mac_1: row.mac_1 ?? personaLocal?.mac_1 ?? '',
     mac_2: row.mac_2 ?? personaLocal?.mac_2 ?? ''
   };
-  const equipoDelMes = round2(Number(row.equipo_mes || 0));
-  const abonoDelMes = round2(Number(row.abono_mes || 0));
-  const totalDelMes = round2(Number(row.total_mes || 0));
-  const pagado = round2(Number(row.pagado || 0));
-  const totalAjuste = round2(Number(row.ajuste_saldo_favor || 0));
+  const equipoDelMes = round2(Number(row.cargo_equipo ?? row.equipo_mes ?? 0));
+  const abonoDelMes = round2(Number(row.cargo_abono ?? row.abono_mes ?? 0));
+  const totalDelMes = round2(Number(row.total_cargos_mes ?? row.total_mes ?? 0));
+  const pagado = round2(Number(row.pagos_del_mes ?? row.pagado ?? 0));
+  const pagosAcumulados = round2(Number(row.pagos_acumulados ?? pagado));
+  const saldoAnterior = round2(Number(row.saldo_anterior || 0));
+  const saldoActual = round2(Number(row.saldo_actual || 0));
+  const saldoFavorInicial = round2(Number(row.saldo_a_favor_inicial || 0));
+  const totalAjuste = round2(Number(row.saldo_a_favor_final ?? row.ajuste_saldo_favor ?? 0));
   const pendiente = round2(Number(row.pendiente_hoy || 0));
   const estado = estadoRpcToUi(row.estado);
+  const equipoPendiente = round2(Number(row.equipo_pendiente ?? Math.max(equipoDelMes, 0)));
+  const abonoPendiente = round2(Number(row.abono_pendiente ?? Math.max(pendiente - equipoPendiente, 0)));
   const conceptoEquipo = equipoDelMes > 0
     ? personaLocal?.es_fundador ? 'COMPRA_INICIAL' : 'REGULARIZACION'
     : null;
@@ -1332,12 +1311,24 @@ function filaRpcACargo(row) {
     mes: row.mes,
     abono_base: abonoDelMes,
     cargo_equipo: equipoDelMes,
-    concepto_equipo: conceptoEquipo,
-    monto_a_pagar: totalDelMes,
+    concepto_equipo: equipoDelMes > 0.01 ? conceptoEquipo : null,
+    monto_a_pagar: pendiente,
     concepto: row.observacion || '',
-    saldo_equipo_antes: equipoDelMes,
+    saldo_equipo_antes: equipoPendiente,
     saldo_equipo_despues: 0,
     compensacion_aplicada: 0,
+    usuarios_activos: Number(row.usuarios_activos || 0),
+    cuota_equipo_por_persona: round2(Number(row.cuota_equipo_por_persona ?? 0)),
+    cuota_abono_mes: round2(Number(row.cuota_abono_mes ?? abonoDelMes)),
+    total_cargos_mes: totalDelMes,
+    pagos_del_mes: pagado,
+    pagos_acumulados: pagosAcumulados,
+    saldo_anterior: saldoAnterior,
+    saldo_actual: saldoActual,
+    saldo_a_favor_inicial: saldoFavorInicial,
+    saldo_a_favor_final: totalAjuste,
+    equipo_pendiente: equipoPendiente,
+    abono_pendiente: abonoPendiente,
     __rpc: true,
     __observacion: row.observacion || '',
     __cuenta: {
@@ -1348,6 +1339,8 @@ function filaRpcACargo(row) {
       totalDelMes,
       pagado,
       totalAjuste,
+      saldoAnterior,
+      saldoActual,
       pendiente,
       saldoAFavor: totalAjuste > 0.01 ? totalAjuste : 0,
       estado
@@ -1359,9 +1352,12 @@ function calculoDesdeRpcRows(rows, mes) {
   const cargos = (rows || []).map(filaRpcACargo);
   const totalAbonoBase = round2(cargos.reduce((total, cargo) => total + Number(cargo.abono_base || 0), 0));
   const totalCargoEquipo = round2(cargos.reduce((total, cargo) => total + Number(cargo.cargo_equipo || 0), 0));
+  const totalCargosPeriodo = round2(cargos.reduce((total, cargo) => total + Number(cargo.total_cargos_mes || 0), 0));
+  const totalPagosPeriodo = round2(cargos.reduce((total, cargo) => total + Number(cargo.pagos_del_mes || 0), 0));
+  const totalSaldoFavor = round2(cargos.reduce((total, cargo) => total + Number(cargo.saldo_a_favor_final || 0), 0));
   const sumaCargos = round2(cargos.reduce((total, cargo) => total + Number(cargo.monto_a_pagar || 0), 0));
-  const totalEquipo = state.config ? totalEquipoActualizado(state.config) : totalCargoEquipo;
-  const totalAbono = state.config ? totalAbonoActualizado(state.config) : totalAbonoBase;
+  const totalEquipo = round2(cargos.reduce((total, cargo) => total + Number(cargo.cuota_equipo_por_persona || 0), 0));
+  const totalAbono = totalAbonoBase;
 
   return {
     mes,
@@ -1372,6 +1368,9 @@ function calculoDesdeRpcRows(rows, mes) {
     usuarios_activos: cargos.length,
     total_abono_base: totalAbonoBase,
     total_cargo_equipo: totalCargoEquipo,
+    total_cargos_periodo: totalCargosPeriodo,
+    total_pagos_periodo: totalPagosPeriodo,
+    total_saldo_a_favor: totalSaldoFavor,
     total_compensacion_aplicada: 0,
     total_modelo: sumaCargos,
     suma_cargos: sumaCargos,
@@ -1380,141 +1379,14 @@ function calculoDesdeRpcRows(rows, mes) {
   };
 }
 
-function clonarCalculo(calculo) {
-  return {
-    ...calculo,
-    cargos: (calculo.cargos || []).map((cargo) => ({
-      ...cargo,
-      persona: cargo.persona ? { ...cargo.persona } : cargo.persona,
-      __cuenta: cargo.__cuenta ? { ...cargo.__cuenta } : cargo.__cuenta
-    }))
-  };
-}
-
-function estadoCuentaCorriente({ totalDelMes, pagado, saldoAnterior, saldoFinal }) {
-  const disponibleInicial = round2(Math.max(Number(saldoAnterior || 0), 0) + Number(pagado || 0));
-  const pendiente = saldoFinal < -0.01 ? round2(Math.abs(saldoFinal)) : 0;
-  const saldoAFavor = saldoFinal > 0.01 ? round2(saldoFinal) : 0;
-
-  if (Number(totalDelMes || 0) <= 0.01 && Number(pagado || 0) <= 0.01 && Math.abs(Number(saldoAnterior || 0)) <= 0.01) {
-    return { estado: 'Sin cargo', pendiente: 0, saldoAFavor: 0 };
-  }
-  if (saldoAFavor > 0.01) {
-    return { estado: 'Saldo a favor', pendiente: 0, saldoAFavor };
-  }
-  if (pendiente <= 0.01) {
-    return { estado: 'Al dia', pendiente: 0, saldoAFavor: 0 };
-  }
-  if (disponibleInicial <= 0.01) {
-    return { estado: 'Pendiente', pendiente, saldoAFavor: 0 };
-  }
-  return { estado: 'Parcial', pendiente, saldoAFavor: 0 };
-}
-
-function aplicarCuentaCorrienteAlCargo(cargo, saldoAnterior, equipoDevengadoAnterior) {
-  const cuentaBase = estadoCuentaCargo(cargo);
-  const equipoBaseDelMes = round2(Number(cuentaBase.equipoDelMes || 0));
-  const equipoDelMes = round2(Math.max(equipoBaseDelMes - Number(equipoDevengadoAnterior || 0), 0));
-  const abonoDelMes = round2(Number(cuentaBase.abonoDelMes || 0));
-  const totalDelMes = round2(equipoDelMes + abonoDelMes);
-  const pagado = round2(Number(cuentaBase.pagado || 0));
-  const saldoFinal = round2(Number(saldoAnterior || 0) + pagado - totalDelMes);
-  const estado = estadoCuentaCorriente({ totalDelMes, pagado, saldoAnterior, saldoFinal });
-
-  cargo.cargo_equipo = equipoDelMes;
-  cargo.abono_base = abonoDelMes;
-  cargo.monto_a_pagar = totalDelMes;
-  cargo.concepto_equipo = equipoDelMes > 0.01 ? cargo.concepto_equipo : null;
-  cargo.__saldo_anterior = round2(Number(saldoAnterior || 0));
-  cargo.__saldo_final = saldoFinal;
-  cargo.__cuenta = {
-    ...cuentaBase,
-    equipoDelMes,
-    abonoDelMes,
-    totalDelMes,
-    pagado,
-    totalAjuste: estado.saldoAFavor,
-    saldoAnterior: round2(Number(saldoAnterior || 0)),
-    saldoFinal,
-    pendiente: estado.pendiente,
-    saldoAFavor: estado.saldoAFavor,
-    estado: estado.estado
-  };
-
-  if (estado.saldoAFavor > 0.01) {
-    cargo.__observacion = 'Saldo a favor disponible.';
-  } else if (estado.pendiente <= 0.01 && totalDelMes > 0.01) {
-    cargo.__observacion = Number(saldoAnterior || 0) > 0.01
-      ? 'Saldo a favor aplicado.'
-      : 'Cuota mensual registrada.';
-  } else if (estado.estado === 'Parcial') {
-    cargo.__observacion = 'Pago parcial registrado.';
-  } else if (estado.estado === 'Pendiente') {
-    cargo.__observacion = 'Cuota mensual pendiente.';
-  }
-
-  return saldoFinal;
-}
-
-async function aplicarCuentaCorrienteHastaMes(calculoFinal, force = false) {
-  const mesFinal = normalizarMesClave(calculoFinal.mes);
-  const meses = mesesCuentaHasta(mesFinal);
-  const saldosPorPersona = new Map();
-  const equipoDevengadoPorPersona = new Map();
-  let calculoAjustado = calculoFinal;
-
-  for (const mes of meses) {
-    const calculoMes = mes === mesFinal
-      ? calculoFinal
-      : await obtenerCalculoMensualEstadoBase(mes, force);
-
-    for (const cargo of calculoMes.cargos || []) {
-      const personaId = String(cargo.persona_id || '');
-      const saldoAnterior = saldosPorPersona.get(personaId) || 0;
-      const equipoDevengadoAnterior = equipoDevengadoPorPersona.get(personaId) || 0;
-      const equipoBaseDelMes = round2(Number(estadoCuentaCargo(cargo).equipoDelMes || 0));
-      const saldoFinal = aplicarCuentaCorrienteAlCargo(cargo, saldoAnterior, equipoDevengadoAnterior);
-      saldosPorPersona.set(personaId, saldoFinal);
-      equipoDevengadoPorPersona.set(personaId, round2(Math.max(equipoDevengadoAnterior, equipoBaseDelMes)));
-    }
-
-    if (mes === mesFinal) {
-      calculoAjustado = calculoMes;
-    }
-  }
-
-  recalcularTotalesCalculoCuentaCorriente(calculoAjustado);
-  return calculoAjustado;
-}
-
-function recalcularTotalesCalculoCuentaCorriente(calculo) {
-  const cargos = calculo.cargos || [];
-  calculo.total_abono_base = round2(cargos.reduce((total, cargo) => total + Number(cargo.abono_base || 0), 0));
-  calculo.total_cargo_equipo = round2(cargos.reduce((total, cargo) => total + Number(cargo.cargo_equipo || 0), 0));
-  calculo.total_compensacion_aplicada = 0;
-  calculo.suma_cargos = round2(cargos.reduce((total, cargo) => total + Number(cargo.monto_a_pagar || 0), 0));
-  calculo.total_modelo = calculo.suma_cargos;
-  calculo.diferencia_redondeo = 0;
-}
-
-async function obtenerCalculoMensualEstadoBase(mes, force = false) {
+async function obtenerCalculoMensualEstado(mes, force = false) {
   const mesClave = normalizarMesClave(mes || currentMonth());
-  if (!force && state.calculosRpcRaw[mesClave]) return clonarCalculo(state.calculosRpcRaw[mesClave]);
+  if (!force && state.calculosRpc[mesClave]) return state.calculosRpc[mesClave];
 
   const { data, error } = await state.supabase.rpc('get_calculo_mensual_estado', { p_mes: mesClave });
   if (error) throw error;
 
   const calculo = calculoDesdeRpcRows(data || [], mesClave);
-  state.calculosRpcRaw[mesClave] = calculo;
-  return clonarCalculo(calculo);
-}
-
-async function obtenerCalculoMensualEstado(mes, force = false) {
-  const mesClave = normalizarMesClave(mes || currentMonth());
-  if (!force && state.calculosRpc[mesClave]) return state.calculosRpc[mesClave];
-
-  const calculoBase = await obtenerCalculoMensualEstadoBase(mesClave, force);
-  const calculo = await aplicarCuentaCorrienteHastaMes(calculoBase, force);
   state.calculosRpc[mesClave] = calculo;
   return calculo;
 }
@@ -1591,7 +1463,6 @@ async function filaMiCuentaDesdeCalculoMensual(personaId, mes) {
 
 function renderPagos() {
   const selectedConcepto = byId('filtro-pago-concepto').value;
-  byId('pago-concepto').innerHTML = conceptoOptions('PAGO_COMPLETO_MES', { includePagoCompleto: true });
   byId('filtro-pago-concepto').innerHTML = `<option value="" ${selectedConcepto ? '' : 'selected'}>Todos</option>${conceptoOptions(selectedConcepto)}`;
   byId('pagos-table').innerHTML = renderPagosTable(pagosFiltrados(), state.personas);
 }
@@ -1875,6 +1746,12 @@ function renderCargosTable(resultado, readonly = false) {
     const cuenta = estadoCuentaCargo(cargo);
     const ajusteSaldo = cuenta.saldoAFavor > 0.01 ? cuenta.saldoAFavor : 0;
     const ajusteClass = ajusteSaldo > 0 ? 'saldo-favor' : 'valor-cero';
+    const saldoAnterior = Number(cuenta.saldoAnterior || 0);
+    const saldoActual = Number(cuenta.saldoActual || 0);
+    const saldoAnteriorClass = saldoAnterior < -0.01 ? 'pending-due' : saldoAnterior > 0.01 ? 'saldo-favor' : 'valor-cero';
+    const saldoActualClass = saldoActual < -0.01 ? 'pending-due' : saldoActual > 0.01 ? 'saldo-favor' : 'valor-cero';
+    const saldoAnteriorTexto = saldoAnterior > 0.01 ? formatARSNegativoVisual(saldoAnterior) : formatARS(Math.abs(saldoAnterior));
+    const saldoActualTexto = saldoActual > 0.01 ? formatARSNegativoVisual(saldoActual) : formatARS(Math.abs(saldoActual));
 
     return `
       <tr>
@@ -1882,8 +1759,9 @@ function renderCargosTable(resultado, readonly = false) {
         <td class="number ${cuenta.equipoDelMes <= 0 ? 'money-muted' : ''}">${formatARS(cuenta.equipoDelMes)}</td>
         <td class="number ${cuenta.abonoDelMes <= 0 ? 'money-muted' : ''}">${formatARS(cuenta.abonoDelMes)}</td>
         <td class="number money-total">${formatARS(cuenta.totalDelMes)}</td>
-        <td class="number ${Number(cuenta.saldoAnterior || 0) < -0.01 ? 'pending-due' : Number(cuenta.saldoAnterior || 0) > 0.01 ? 'saldo-favor' : 'valor-cero'}">${Number(cuenta.saldoAnterior || 0) > 0.01 ? formatARSNegativoVisual(cuenta.saldoAnterior) : formatARS(Math.abs(Number(cuenta.saldoAnterior || 0)))}</td>
         <td class="number ${cuenta.pagado <= 0 ? 'money-muted' : 'money-paid'}">${formatARS(cuenta.pagado)}</td>
+        <td class="number ${saldoAnteriorClass}">${saldoAnteriorTexto}</td>
+        <td class="number ${saldoActualClass}">${saldoActualTexto}</td>
         <td class="number ${ajusteClass}">${formatARSNegativoVisual(ajusteSaldo)}</td>
         <td class="number pending-today ${cuenta.pendiente <= 0 ? 'pending-ok' : 'pending-due'}">${formatARS(cuenta.pendiente)}</td>
         <td><span class="status-pill status-${estadoClass(cuenta.estado)}">${escapeHtml(cuenta.estado)}</span></td>
@@ -1894,21 +1772,24 @@ function renderCargosTable(resultado, readonly = false) {
 
   return `
     <div class="summary-line">
-      <span>Abono mensual: <strong>${formatARS(resultado.total_abono_actualizado)}</strong></span>
-      <span>Equipo del mes: <strong>${formatARS(resultado.total_cargo_equipo || 0)}</strong></span>
-      <span>Compensacion: <strong>${formatARS(resultado.total_compensacion_aplicada || 0)}</strong></span>
-      <span>Total a cobrar: <strong>${formatARS(resultado.suma_cargos)}</strong></span>
-      <span>Diferencia: <strong>${formatARS(resultado.diferencia_redondeo)}</strong></span>
+      <span>Ajuste equipo del periodo: <strong>${formatARS(resultado.total_cargo_equipo || 0)}</strong></span>
+      <span>Abono del periodo: <strong>${formatARS(resultado.total_abono_base || 0)}</strong></span>
+      <span>Total cargos del periodo: <strong>${formatARS(resultado.total_cargos_periodo || 0)}</strong></span>
+      <span>Pagos del periodo: <strong>${formatARS(resultado.total_pagos_periodo || 0)}</strong></span>
+      <span>Saldo a favor: <strong>${formatARSNegativoVisual(resultado.total_saldo_a_favor || 0)}</strong></span>
+      <span>Pendiente hoy: <strong>${formatARS(resultado.suma_cargos)}</strong></span>
     </div>
+    <p class="muted">El equipo del periodo es el cargo o ajuste contra el objetivo del mes anterior, no la cuota objetivo completa.</p>
     <table>
       <thead>
         <tr>
           <th>Persona</th>
-          <th>Equipo del mes</th>
-          <th>Abono del mes</th>
-          <th>Total del mes</th>
+          <th>Ajuste equipo / Cargo equipo del periodo</th>
+          <th>Abono del periodo</th>
+          <th>Total cargos del periodo</th>
+          <th>Pagos del periodo</th>
           <th>Saldo anterior</th>
-          <th>Pagado</th>
+          <th>Saldo actual</th>
           <th>Ajuste / saldo a favor</th>
           <th>Pendiente hoy</th>
           <th>Estado</th>
@@ -1944,30 +1825,30 @@ async function cargosParaMensajes(mes) {
   const calculo = await obtenerCalculoMensualEstado(mes, true);
   return (calculo.cargos || [])
     .map(cargoPendienteParaMensaje)
-    .filter((cargo) => cargo.persona && Number(cargo.monto_a_pagar || 0) > 0.01);
+    .filter((cargo) => {
+      if (!cargo.persona) return false;
+      const estado = cargo.__estado_cuenta || '';
+      return Number(cargo.monto_a_pagar || 0) > 0.01
+        || Number(cargo.__saldo_a_favor || 0) > 0.01
+        || estado === 'Al dia';
+    });
 }
 
 function cargoPendienteParaMensaje(cargo) {
   const cuenta = estadoCuentaCargo(cargo);
   const pendiente = round2(Number(cuenta.pendiente || 0));
-  const equipoDelMes = round2(Number(cuenta.equipoDelMes || cargo.cargo_equipo || 0));
-  const abonoDelMes = round2(Number(cuenta.abonoDelMes || cargo.abono_base || 0));
-  const cobertura = round2(Math.max(Number(cuenta.totalDelMes || 0) - pendiente, 0));
-  const equipoPendiente = round2(Math.max(equipoDelMes - cobertura, 0));
-  const coberturaRestante = round2(Math.max(cobertura - equipoDelMes, 0));
-  const abonoPendiente = round2(Math.max(abonoDelMes - coberturaRestante, 0));
-  const conceptoEquipo = equipoPendiente > 0.01 ? cargo.concepto_equipo : null;
 
   return {
     ...cargo,
-    abono_base: abonoPendiente,
-    cargo_equipo: equipoPendiente,
-    concepto_equipo: conceptoEquipo,
-    compra_inicial_aplicada: conceptoEquipo === 'COMPRA_INICIAL' ? equipoPendiente : 0,
-    regularizacion_aplicada: conceptoEquipo === 'REGULARIZACION' ? equipoPendiente : 0,
+    abono_base: cuenta.abonoDelMes,
+    cargo_equipo: cuenta.equipoDelMes,
+    concepto_equipo: null,
+    compra_inicial_aplicada: 0,
+    regularizacion_aplicada: 0,
     compensacion_aplicada: 0,
     monto_a_pagar: pendiente,
     __monto_total_mes: cuenta.totalDelMes,
+    __cuota_abono_mes: cuenta.abonoDelMes,
     __saldo_a_favor: cuenta.saldoAFavor,
     __saldo_anterior: Number(cuenta.saldoAnterior || 0),
     __estado_cuenta: cuenta.estado
@@ -2228,7 +2109,6 @@ async function boot() {
   byId('filtro-pago-mes').value = currentMonth();
   byId('export-mes').value = currentMonth();
   byId('pago-form').elements.fecha_pago.value = new Date().toISOString().slice(0, 10);
-  byId('pago-form').elements.mes_aplicado.value = currentMonth();
 
   bindEvents();
 
@@ -2408,35 +2288,73 @@ async function handleMiCuentaComprobanteSubmit(event) {
   }
 }
 
-async function registrarPagoCompletoMes({ personaId, mes, monto, fechaPago, medio, observaciones }) {
+async function registrarPagoReal({ personaId, monto, fechaPago, medio, observaciones }) {
   const montoPagado = normalizeNumber(monto);
+  const mesLegado = mesDesdeFechaPago(fechaPago);
   if (!personaId) throw new Error('Falta persona asociada al pago.');
-  if (!MES_CIERRE_PATTERN.test(mes)) throw new Error('El mes aplicado no es valido.');
+  if (!MES_CIERRE_PATTERN.test(mesLegado)) throw new Error('La fecha de pago no es valida.');
   if (!Number.isFinite(montoPagado) || montoPagado <= 0) throw new Error('El monto a registrar no es valido.');
 
-  const cargoAsociado = buscarCargoAsociado(personaId, mes);
-  if (!cargoAsociado) {
-    throw new Error('Primero debe calcularse el mes o existir un cargo vigente para esta persona.');
+  const persona = state.personas.find((item) => mismaPersona(item.id, personaId));
+  const calculo = await obtenerCalculoMensualEstado(mesLegado, true);
+  const cargo = calculo.cargos.find((item) => mismaPersona(item.persona_id, personaId));
+  const equipoPendiente = round2(Math.max(Number(cargo?.equipo_pendiente || 0), 0));
+  const pendienteTotal = round2(Math.max(Number(cargo?.monto_a_pagar || 0), 0));
+  const abonoPendiente = round2(Math.max(Number(cargo?.abono_pendiente ?? pendienteTotal - equipoPendiente), 0));
+  const minimoIngreso = round2(equipoPendiente + abonoPendiente);
+
+  if (equipoPendiente > 0.01 && montoPagado + 0.01 < minimoIngreso) {
+    throw new Error('Para ingresar debe cubrir equipo y abono del mes como minimo.');
   }
 
-  const imputaciones = descomponerPagoSegunCargo(montoPagado, cargoAsociado);
-  if (!imputaciones.length) throw new Error('No se generaron imputaciones para el pago.');
+  let restante = montoPagado;
+  const componentes = [];
 
-  const basePayload = {
+  if (equipoPendiente > 0.01 && restante > 0.01) {
+    const montoEquipo = round2(Math.min(restante, equipoPendiente));
+    componentes.push({
+      concepto: persona?.es_fundador ? 'COMPRA_INICIAL' : 'REGULARIZACION',
+      monto: montoEquipo,
+      observaciones: observaciones?.trim() || null
+    });
+    restante = round2(restante - montoEquipo);
+  }
+
+  if (abonoPendiente > 0.01 && restante > 0.01) {
+    const montoAbono = round2(Math.min(restante, abonoPendiente));
+    componentes.push({
+      concepto: 'ABONO',
+      monto: montoAbono,
+      observaciones: observaciones?.trim() || null
+    });
+    restante = round2(restante - montoAbono);
+  }
+
+  if (restante > 0.01) {
+    componentes.push({
+      concepto: 'AJUSTE',
+      monto: restante,
+      observaciones: observaciones?.trim() || 'Ajuste automatico por pago excedente'
+    });
+  }
+
+  if (!componentes.length) {
+    componentes.push({
+      concepto: 'AJUSTE',
+      monto: montoPagado,
+      observaciones: observaciones?.trim() || null
+    });
+  }
+
+  const payload = componentes.map((componente) => ({
     persona_id: personaId,
     fecha_pago: fechaPago,
-    mes_aplicado: mes,
+    mes_aplicado: mesLegado,
     medio: medio || 'TRANSFERENCIA',
-    observaciones: observaciones?.trim() || null,
-    created_by: state.session.user.id
-  };
-  const payload = imputaciones.map((imputacion) => ({
-    ...basePayload,
-    monto: imputacion.monto,
-    concepto: imputacion.concepto,
-    observaciones: imputacion.observaciones
-      ? asciiGeneratedText(imputacion.observaciones)
-      : basePayload.observaciones
+    observaciones: componente.observaciones,
+    created_by: state.session?.user?.id || null,
+    concepto: componente.concepto,
+    monto: componente.monto
   }));
 
   const { data, error } = await state.supabase
@@ -2474,8 +2392,8 @@ async function handleComprobantePagoSubmit(event) {
     if ((comprobante.estado || 'PENDIENTE') !== 'PENDIENTE') {
       throw new Error('Solo se pueden procesar comprobantes pendientes.');
     }
-    if (!comprobante.persona_id || !comprobante.mes_aplicado) {
-      throw new Error('El comprobante no tiene persona o mes aplicado valido.');
+    if (!comprobante.persona_id) {
+      throw new Error('El comprobante no tiene persona asociada.');
     }
 
     const monto = normalizeNumber(raw.monto);
@@ -2484,7 +2402,7 @@ async function handleComprobantePagoSubmit(event) {
     }
 
     const persona = state.personas.find((item) => mismaPersona(item.id, comprobante.persona_id));
-    const mensaje = `Registrar pago de ${formatARS(monto)} para ${persona?.nombre || 'esta persona'} en ${comprobante.mes_aplicado}?`;
+    const mensaje = `Registrar pago de ${formatARS(monto)} para ${persona?.nombre || 'esta persona'} con fecha ${raw.fecha_pago}?`;
     if (!confirm(mensaje)) return;
 
     setLoading('Registrando pago desde comprobante...');
@@ -2503,9 +2421,8 @@ async function handleComprobantePagoSubmit(event) {
 
     const observaciones = raw.observaciones?.trim()
       || `Registrado desde comprobante ${comprobanteActual.archivo_nombre || comprobante.id}`;
-    const pagosCreados = await registrarPagoCompletoMes({
+    const pagosCreados = await registrarPagoReal({
       personaId: comprobanteActual.persona_id,
-      mes: comprobanteActual.mes_aplicado,
       monto,
       fechaPago: raw.fecha_pago,
       medio: raw.medio || 'TRANSFERENCIA',
@@ -2874,42 +2791,16 @@ async function savePago(event) {
   if (!form) return setError('No se encontro el formulario de pagos.');
 
   const raw = formToObject(form);
-  const basePayload = {
-    persona_id: raw.persona_id,
-    fecha_pago: raw.fecha_pago,
-    mes_aplicado: raw.mes_aplicado,
-    medio: raw.medio || 'TRANSFERENCIA',
-    observaciones: raw.observaciones?.trim() || null,
-    created_by: state.session.user.id
-  };
-
   try {
-    const montoPagado = normalizeNumber(raw.monto);
-    const pagoCompletoMes = raw.concepto === 'PAGO_COMPLETO_MES';
-    const cargoAsociado = pagoCompletoMes
-      ? buscarCargoAsociado(raw.persona_id, raw.mes_aplicado)
-      : null;
-    if (pagoCompletoMes && !cargoAsociado) {
-      throw new Error('Primero debe calcularse el mes o existir un cargo vigente para esta persona.');
-    }
-
-    const imputaciones = pagoCompletoMes
-      ? descomponerPagoSegunCargo(montoPagado, cargoAsociado)
-      : [{ concepto: raw.concepto, monto: montoPagado }];
-    const payload = imputaciones.map((imputacion) => ({
-      ...basePayload,
-      monto: imputacion.monto,
-      concepto: imputacion.concepto,
-      observaciones: imputacion.observaciones
-        ? asciiGeneratedText(imputacion.observaciones)
-        : basePayload.observaciones
-    }));
-
-    const { error } = await state.supabase.from('pagos').insert(payload);
-    if (error) throw error;
+    await registrarPagoReal({
+      personaId: raw.persona_id,
+      monto: raw.monto,
+      fechaPago: raw.fecha_pago,
+      medio: raw.medio || 'TRANSFERENCIA',
+      observaciones: raw.observaciones?.trim() || null
+    });
     form.reset();
     form.elements.fecha_pago.value = new Date().toISOString().slice(0, 10);
-    form.elements.mes_aplicado.value = currentMonth();
     form.elements.medio.value = 'TRANSFERENCIA';
     await loadData();
     setOk('Pago registrado.');

@@ -1,16 +1,13 @@
 import { CONCEPTOS_PAGO, escapeHtml, formatARS, round2 } from './utils.js';
 
-const PAGO_COMPLETO_MES = 'PAGO_COMPLETO_MES';
+export function mesDesdeFechaPago(fechaPago) {
+  return String(fechaPago || '').slice(0, 7);
+}
 
-export function conceptoOptions(selected = '', options = {}) {
-  const conceptos = options.includePagoCompleto
-    ? [PAGO_COMPLETO_MES, ...CONCEPTOS_PAGO]
-    : CONCEPTOS_PAGO;
-
-  return conceptos
+export function conceptoOptions(selected = '') {
+  return CONCEPTOS_PAGO
     .map((concepto) => {
-      const label = concepto === PAGO_COMPLETO_MES ? 'Pago completo del mes' : concepto;
-      return `<option value="${escapeHtml(concepto)}" ${concepto === selected ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+      return `<option value="${escapeHtml(concepto)}" ${concepto === selected ? 'selected' : ''}>${escapeHtml(concepto)}</option>`;
     })
     .join('');
 }
@@ -51,7 +48,7 @@ export function descomponerPagoSegunCargo(montoPagado, cargo) {
     partes.push({
       concepto: 'AJUSTE',
       monto: excedente,
-      observaciones: 'Ajuste automático por pago excedente'
+      observaciones: 'Ajuste automatico por pago excedente'
     });
   }
 
@@ -68,7 +65,7 @@ export function renderPagosTable(pagos, personas) {
         <tr>
           <td>${escapeHtml(pago.fecha_pago)}</td>
           <td>${escapeHtml(persona?.nombre || 'Sin persona')}</td>
-          <td>${escapeHtml(pago.mes_aplicado)}</td>
+          <td>${escapeHtml(mesDesdeFechaPago(pago.fecha_pago))}</td>
           <td><span class="badge">${escapeHtml(pago.concepto)}</span></td>
           <td class="number">${formatARS(pago.monto)}</td>
           <td>${escapeHtml(pago.medio)}</td>

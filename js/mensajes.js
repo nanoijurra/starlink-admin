@@ -25,33 +25,28 @@ export function mensajePorCargo(persona, cargo, mes, aliasBancario = '') {
 
   const montoNumero = Number(cargo?.monto_a_pagar || 0);
   const monto = formatARS(montoNumero);
+  const saldoFavor = Number(cargo?.__saldo_a_favor || 0);
+  const cuotaAbono = Number(cargo?.__cuota_abono_mes || cargo?.abono_base || 0);
   const saldoAnterior = lineaSaldoAnterior(cargo);
   const alias = lineaAlias(aliasBancario, montoNumero);
 
-  if (cargo?.concepto_equipo === 'COMPRA_INICIAL' || cargo?.compra_inicial_aplicada > 0) {
+  if (montoNumero <= 0.01 && saldoFavor > 0.01) {
     return `Hola ${persona.nombre}. Starlink ACC Cordoba.
 Mes: ${mes}
-Importe a pagar: ${monto}
-Concepto: compra inicial del equipo + abono mensual.${saldoAnterior}${alias}`;
+No tenes que pagar este mes.
+Tu cuota mensual es ${formatARS(cuotaAbono)} y tenes saldo a favor suficiente.
+Saldo a favor restante: ${formatARS(saldoFavor)}.`;
   }
 
-  if (cargo?.concepto_equipo === 'REGULARIZACION' || cargo?.regularizacion_aplicada > 0) {
+  if (montoNumero <= 0.01) {
     return `Hola ${persona.nombre}. Starlink ACC Cordoba.
 Mes: ${mes}
-Importe a pagar: ${monto}
-Concepto: regularizacion proporcional de compra inicial + abono mensual.
-La regularizacion se usa dentro de la cuota mensual para armonizar los aportes. Una vez equilibrado el costo inicial, pasas a cuota normal.${saldoAnterior}${alias}`;
-  }
-
-  if (cargo?.compensacion_aplicada > 0) {
-    return `Hola ${persona.nombre}. Starlink ACC Cordoba.
-Mes: ${mes}
-Importe a pagar: ${monto}
-Concepto: saldo compensatorio por aporte inicial del equipo.${saldoAnterior}${alias}`;
+No tenes que pagar este mes.
+Tu cuenta esta al dia.`;
   }
 
   return `Hola ${persona.nombre}. Starlink ACC Cordoba.
 Mes: ${mes}
 Importe a pagar: ${monto}
-Concepto: cuota mensual del servicio.${saldoAnterior}${alias}`;
+Concepto: regularizacion de cuenta corriente Starlink ACC Cordoba.${saldoAnterior}${alias}`;
 }
