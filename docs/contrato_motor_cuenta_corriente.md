@@ -1,123 +1,220 @@
-# Contrato del motor de cuenta corriente - Starlink Admin
+# Prompt para Codex - Fase 1 reparar motor de cuenta corriente
 
-## 1. Objetivo del sistema
+Estamos trabajando en el proyecto `starlink-admin`.
 
-El objetivo principal de Starlink Admin es llevar una cuenta corriente clara, justa y verificable para administrar los pagos compartidos del servicio Starlink del grupo.
+Ya existe un documento rector que debe ser leido antes de tocar codigo:
 
-El sistema debe asegurar que:
+```text
+docs/contrato_motor_cuenta_corriente.md
+```
 
-- Todos los usuarios activos paguen proporcionalmente lo mismo por el costo inicial del equipo.
-- Todos los usuarios activos paguen proporcionalmente lo mismo por el abono mensual del plan.
-- Cada pago real ingresado impacte correctamente en la cuenta corriente de la persona.
-- Si una persona paga de mas, ese excedente quede como saldo a favor para meses futuros.
-- Todas las pantallas importantes muestren la misma informacion.
+Primero lee ese documento completo. Ese archivo es el contrato funcional del sistema.
 
-La cuenta corriente es el corazon del sistema. Todo lo demas debe depender de ella.
+El objetivo de esta tarea es reparar la FASE 1 del motor de cuenta corriente.
+
+No quiero nuevas funciones accesorias. No quiero redisenar toda la app. No quiero tocar router, cierre mensual, ZIP, PWA ni exportaciones en esta fase.
 
 ---
 
-## 2. Fuente unica de informacion
+## Objetivo principal
 
-La app no debe tener varias pantallas calculando deuda de manera independiente.
+El sistema debe volver a cumplir su objetivo original:
 
-Debe existir una fuente unica de cuenta corriente mensual, que puede conservar el nombre actual:
+```text
+Todos los usuarios activos pagan proporcionalmente lo mismo por el equipo.
+Todos los usuarios activos pagan proporcionalmente lo mismo por el abono mensual.
+Cada pago real ingresado impacta en una cuenta corriente unica.
+Si alguien paga de mas, queda saldo a favor para meses futuros.
+```
+
+Actualmente distintas pantallas calculan distinto. Eso debe corregirse.
+
+En esta fase deben quedar alineados:
+
+```text
+Calculo mensual = Mi cuenta = Mensajes de cobro
+```
+
+---
+
+## Alcance permitido
+
+Modificar solo lo necesario para:
+
+1. Reparar el motor de cuenta corriente.
+2. Reparar la carga manual de pagos.
+3. Reparar el procesamiento de pagos desde comprobantes, si existe.
+4. Hacer que Calculo mensual use la fuente canonica.
+5. Hacer que Mi cuenta use la misma fuente canonica.
+6. Hacer que Mensajes use la misma fuente canonica.
+
+---
+
+## Fuera de alcance
+
+No tocar en esta fase:
+
+```text
+Router / MAC
+Cierre mensual
+ZIP de cierre
+PWA
+Service worker
+Storage
+Exportaciones
+Cambios esteticos generales
+Nuevas pantallas
+```
+
+No borrar pagos existentes.
+
+No modificar datos reales desde codigo.
+
+No hacer migraciones destructivas.
+
+No hacer commits automaticos.
+
+---
+
+## Fuente canonica
+
+Revisar si existe la RPC:
 
 ```text
 get_calculo_mensual_estado(p_mes)
 ```
 
-Esa fuente debe ser usada por:
+Si existe, mantener ese nombre y reparar su logica.
 
-- Calculo mensual.
-- Mi cuenta.
-- Mensajes de cobro.
-- Panel mensual.
-- Cierre mensual.
-- Exportaciones.
-- ZIP de cierre.
-- Gestion router / MAC.
+La prioridad es que esta RPC sea la fuente canonica de la cuenta corriente mensual.
 
-En una primera etapa de reparacion, la prioridad sera conectar correctamente:
+Si hace falta crear una migracion SQL nueva, crear un archivo nuevo, por ejemplo:
 
-- Calculo mensual.
-- Mi cuenta.
-- Mensajes de cobro.
+```text
+sql/010_reparacion_motor_cuenta_corriente.sql
+```
 
-Despues se conectaran las demas pantallas.
+No modificar destructivamente migraciones anteriores.
+
+Si no se puede resolver todo en SQL, explicar por que. Pero las pantallas no deben volver a calcular cada una por separado.
 
 ---
 
-## 3. Usuarios activos
+## Regla critica sobre pagos
 
-La division del costo se hace entre usuarios activos.
+La cuenta corriente NO debe depender de que `pagos.concepto` haya sido elegido correctamente.
 
-Un usuario activo es una persona registrada en `personas` con estado:
+Para saber cuanto dinero real ingreso una persona, usar:
 
-```text
-ACTIVO
+```sql
+sum(pagos.monto)
 ```
 
-Las personas que no esten activas no deben generar nueva deuda mensual.
+por persona y por mes.
 
-Regla general:
+Los conceptos internos pueden seguir existiendo para auditoria:
 
 ```text
-cantidad_usuarios_activos = cantidad de personas con estado ACTIVO
+COMPRA_INICIAL
+REGULARIZACION
+ABONO
+AJUSTE
 ```
 
-Esa cantidad se usa para dividir:
-
-- El costo inicial del equipo.
-- El costo mensual del abono.
+Pero el motor de cuenta corriente debe basarse en dinero real ingresado, no en que el concepto manual haya sido correcto.
 
 ---
 
-## 4. Costo inicial del equipo
+## Modelo de cuenta corriente esperado
 
-El costo inicial actualizado del equipo Starlink debe dividirse entre todos los usuarios activos.
+Para un mes consultado `p_mes`, calcular por persona:
 
-Formula conceptual:
+```text
+obligacion acumulada hasta p_mes
+-
+dinero real pagado acumulado hasta p_mes
+=
+pendiente o saldo a favor
+```
+
+El calculo debe ser acumulativo, no aislado del mes.
+
+Esto es obligatorio porque el saldo a favor de meses anteriores debe aplicarse automaticamente a meses futuros.
+
+---
+
+## Participacion por mes
+
+Usar los datos disponibles en el modelo actual.
+
+Si no existe fecha de alta / fecha de ingreso, aplicar este fallback:
+
+```text
+Si es_fundador = true:
+  participa desde el primer mes operativo del sistema.
+
+Si es_fundador = false y tiene pagos:
+  participa desde su primer mes_aplicado con pago.
+
+Si es_fundador = false y no tiene pagos:
+  participa desde el mes consultado.
+
+Si estado <> ACTIVO:
+  no debe generar deuda nueva en el mes consultado.
+```
+
+No inventar una migracion grande de altas/bajas en esta fase.
+
+---
+
+## Equipo
+
+El total actualizado del equipo se divide entre usuarios activos/participantes.
 
 ```text
 cuota_equipo_por_persona = total_equipo_actualizado / usuarios_activos
 ```
 
-Todos los usuarios activos deben terminar pagando la misma cuota de equipo.
+Todos los usuarios activos deben terminar pagando lo mismo por el equipo.
 
-El pago del equipo es condicion necesaria para ingresar al grupo.
-
-Por lo tanto, no debe existir una situacion valida donde un usuario nuevo quede debiendo equipo despues de ser incorporado.
+Cuando aumenta la cantidad de usuarios activos, la cuota individual de equipo baja. Si alguien ya pago mas que su nueva cuota, esa diferencia debe transformarse en saldo a favor para meses futuros.
 
 ---
 
-## 5. Abono mensual
+## Abono mensual
 
-El abono mensual actualizado debe dividirse entre todos los usuarios activos del mes.
-
-Formula conceptual:
+El abono mensual actualizado se divide entre los usuarios activos/participantes del mes.
 
 ```text
-cuota_abono_mes = total_abono_actualizado / usuarios_activos
+cuota_abono_mes = total_abono_actualizado / usuarios_activos_del_mes
 ```
-
-Cada usuario activo debe pagar su parte mensual del abono, salvo que tenga saldo a favor suficiente para cubrirla.
 
 ---
 
-## 6. Carga de pagos
+## Saldo a favor
 
-La carga de pagos debe ser simple y no debe depender de que el admin elija conceptos manualmente.
+El saldo a favor debe aplicarse automaticamente a meses futuros.
 
-El admin debe cargar solamente:
+Ejemplo:
 
-- Persona.
-- Fecha de pago.
-- Mes aplicado.
-- Monto pagado.
-- Medio de pago.
-- Observacion opcional.
+```text
+Saldo a favor previo: 2000.00
+Abono del mes: 1178.13
+Pago nuevo: 0.00
 
-No deben mostrarse como opciones manuales:
+Resultado:
+Pendiente: 0.00
+Saldo a favor final: 821.87
+Estado: SALDO A FAVOR
+```
+
+---
+
+## Carga de pagos
+
+La pantalla de carga de pagos no debe permitir elegir concepto manual.
+
+Eliminar u ocultar como opciones elegibles:
 
 ```text
 COMPRA_INICIAL
@@ -125,108 +222,131 @@ REGULARIZACION
 ABONO
 AJUSTE
 Pago completo del mes
+PAGO_COMPLETO_MES
 ```
 
-Esos conceptos pueden seguir existiendo internamente, pero deben ser generados por el sistema, no elegidos manualmente por el admin.
+El admin debe cargar solamente:
 
----
+```text
+Persona
+Fecha de pago
+Mes aplicado
+Monto pagado
+Medio
+Observacion opcional
+```
 
-## 7. Imputacion automatica del pago
-
-Cuando se registra un pago, el sistema debe imputarlo automaticamente en este orden:
+El sistema debe imputar automaticamente el monto en este orden:
 
 ```text
 1. Equipo pendiente, si corresponde.
-2. Abono del mes.
-3. Saldo a favor, si sobra dinero.
+2. Abono / deuda mensual.
+3. Saldo a favor, si sobra.
 ```
 
-### Caso A - Usuario nuevo
+Internamente se pueden seguir guardando varias filas en `pagos` con conceptos para compatibilidad, pero esos conceptos deben ser generados por el sistema, no elegidos manualmente.
 
-Un usuario nuevo debe pagar como minimo:
+---
+
+## Regla de ingreso
+
+Si una persona todavia debe equipo, el sistema no debe aceptar un pago menor al minimo necesario para ingresar.
+
+Minimo:
 
 ```text
-equipo pendiente + abono del mes
+equipo pendiente + abono pendiente del mes
 ```
 
-Si paga menos que eso, el sistema no debe registrar el ingreso como valido.
+considerando saldo a favor previo si existiera.
 
-Mensaje esperado:
+Mensaje fijo esperado, sin acentos:
 
 ```text
 Para ingresar debe cubrir equipo y abono del mes como minimo.
 ```
 
-### Caso B - Usuario que ya pago el equipo
-
-Si la persona ya tiene cubierto el equipo, el pago se aplica primero al abono del mes.
-
-Si paga mas que el abono, el excedente queda como saldo a favor.
-
-### Caso C - Usuario con saldo a favor
-
-Si una persona tiene saldo a favor previo, ese saldo debe aplicarse automaticamente a la deuda mensual.
-
-Si el saldo a favor alcanza para cubrir el mes, la persona no debe pagar nada ese mes.
+Para personas que ya tienen cubierto el equipo, permitir pago parcial del abono y marcar estado `PARCIAL`.
 
 ---
 
-## 8. Saldo a favor
+## Procesamiento desde comprobantes
 
-El saldo a favor representa dinero pagado de mas por una persona.
-
-Puede originarse por:
-
-- Pago mayor al equipo mas abono.
-- Pago mayor al abono mensual.
-- Recalculo del costo del equipo al incorporarse nuevos usuarios activos.
-- Correcciones manuales debidamente registradas.
-
-El saldo a favor no se devuelve en efectivo.
-
-Debe aplicarse automaticamente a obligaciones futuras.
-
-Ejemplo:
+Si existe "Registrar pago desde comprobante", debe usar exactamente la misma logica que la carga manual de pagos:
 
 ```text
-Abono del mes: 1178,13
-Saldo a favor previo: 2000,00
+monto total informado
+=> imputacion automatica
+=> equipo
+=> abono
+=> saldo a favor
+```
 
-Resultado:
-Pendiente del mes: 0,00
-Saldo a favor restante: 821,87
+No debe elegir conceptos manuales.
+
+Mantener la proteccion contra doble procesamiento.
+
+---
+
+## Calculo mensual
+
+La vista Calculo mensual debe leer la fuente canonica.
+
+No debe calcular deuda con una logica paralela.
+
+Debe mostrar, como minimo:
+
+```text
+Persona
+Equipo / cuota equipo objetivo
+Abono del mes
+Total pagado del mes
+Saldo a favor inicial
+Saldo a favor final
+Pendiente hoy
+Estado
+Observacion
+```
+
+No debe mostrar totales globales como deuda personal.
+
+---
+
+## Mi cuenta
+
+Mi cuenta debe usar la misma fuente que Calculo mensual, filtrada por la persona vinculada al usuario autenticado.
+
+Para una misma persona y mes:
+
+```text
+Mi cuenta debe dar los mismos numeros que Calculo mensual.
 ```
 
 ---
 
-## 9. Conceptos internos de pago
+## Mensajes
 
-Los conceptos internos pueden mantenerse para compatibilidad y auditoria:
+Mensajes no debe calcular deuda por su cuenta.
 
-```text
-COMPRA_INICIAL
-REGULARIZACION
-ABONO
-AJUSTE
-```
+Debe leer la misma fuente canonica que Calculo mensual.
 
-Pero la cuenta corriente no debe depender de que el concepto haya sido elegido correctamente por una persona.
+Si `pendiente_hoy > 0`, el mensaje debe pedir exactamente ese importe.
 
-La fuente principal del dinero ingresado debe ser:
+Si `pendiente_hoy <= 0` y hay saldo a favor, debe informar que no tiene que pagar este mes y mostrar el saldo restante.
+
+Ejemplo de texto, sin acentos:
 
 ```text
-sum(pagos.monto)
+No tenes que pagar este mes.
+Tu cuota mensual es $X y tenes saldo a favor suficiente.
+Saldo a favor restante: $Y.
 ```
-
-por persona y por mes.
-
-Los conceptos sirven para explicar como fue imputado el pago, no para reemplazar el calculo de cuenta corriente.
 
 ---
 
-## 10. Estados de cuenta
+## Estados
 
-La cuenta corriente mensual debe devolver estados claros y sin acentos:
+Usar textos fijos sin acentos:
 
 ```text
 AL DIA
@@ -240,209 +360,143 @@ Criterios:
 
 ```text
 AL DIA:
-No tiene pendiente y no tiene saldo a favor relevante.
+pendiente_hoy <= 0.01 y saldo_a_favor_final <= 0.01
 
 SALDO A FAVOR:
-No tiene pendiente y tiene saldo a favor.
+pendiente_hoy <= 0.01 y saldo_a_favor_final > 0.01
 
 PENDIENTE:
-Tiene deuda y no registro pago aplicable en el mes.
+pendiente_hoy > 0.01 y total_pagado_mes <= 0.01
 
 PARCIAL:
-Tiene deuda, pero registro algun pago aplicable en el mes.
+pendiente_hoy > 0.01 y total_pagado_mes > 0.01
 
 SIN CARGO:
-No corresponde cargo mensual y no tiene deuda.
+sin cargo mensual, sin deuda y sin pago
 ```
 
-Tolerancia por redondeo:
+Usar tolerancia de redondeo:
 
 ```text
-0,01
+0.01
 ```
 
 ---
 
-## 11. Informacion minima que debe devolver el motor
+## Caso real obligatorio: PEREZ CARINA
 
-Para cada persona y mes, la fuente canonica debe devolver como minimo:
-
-```text
-persona_id
-nombre
-mes
-usuarios_activos
-cuota_equipo_por_persona
-cuota_abono_mes
-total_pagado_mes
-total_pagado_acumulado
-equipo_imputado_mes
-abono_imputado_mes
-saldo_a_favor_inicial
-saldo_a_favor_final
-pendiente_hoy
-estado
-observacion
-```
-
-Esta salida debe ser suficiente para alimentar:
-
-- Calculo mensual.
-- Mi cuenta.
-- Mensajes.
-- Panel.
-- Exportaciones.
-- Cierre.
-- Router.
-
----
-
-## 12. Mensajes de cobro
-
-Mensajes no debe calcular deuda por su cuenta.
-
-Debe leer el mismo resultado que Calculo mensual.
-
-Si la persona tiene pendiente:
-
-```text
-Monto a pagar: pendiente_hoy
-```
-
-Si la persona tiene saldo a favor suficiente:
-
-```text
-No tenes que pagar este mes.
-Tu cuota mensual es $X y tenes saldo a favor suficiente.
-Saldo a favor restante: $Y.
-```
-
-Si la persona tiene saldo a favor parcial, el mensaje debe pedir solo la diferencia.
-
----
-
-## 13. Caso real de control - PEREZ CARINA
-
-Caso corregido:
+Debe respetarse este caso real:
 
 ```text
 Persona: PEREZ CARINA
 Fecha de pago: 2026-07-04
 Mes aplicado: 2026-07
 
-COMPRA_INICIAL: 18854,48
-ABONO: 1137,50
-AJUSTE: 8,02
+COMPRA_INICIAL: 18854.48
+ABONO: 1137.50
+AJUSTE: 8.02
 
-Total real pagado: 20000,00
+Total real pagado: 20000.00
 ```
 
 Interpretacion correcta:
 
 ```text
-Equipo imputado: 18854,48
-Abono imputado: 1137,50
-Saldo a favor: 8,02
-Total pagado: 20000,00
-Pendiente: 0,00
+Total real pagado: 20000.00
+Saldo a favor: 8.02
+Pendiente: 0.00
 ```
 
-El sistema no debe volver a interpretar que Carina tiene saldo a favor de 180008,02.
+El sistema no debe volver a mostrar saldo a favor de 180008.02 para Carina.
 
 ---
 
-## 14. Casos de prueba obligatorios
+## Casos de prueba obligatorios
+
+Agregar o actualizar pruebas/manual tests si corresponde.
 
 ### Caso 1 - Usuario nuevo paga minimo mas excedente
 
 Entrada:
 
 ```text
-Equipo pendiente: 18854,48
-Abono mes: 1137,50
-Pago recibido: 20000,00
+Equipo pendiente: 18854.48
+Abono mes: 1137.50
+Pago recibido: 20000.00
 ```
 
 Salida esperada:
 
 ```text
-Equipo imputado: 18854,48
-Abono imputado: 1137,50
-Saldo a favor: 8,02
-Pendiente: 0,00
+Equipo imputado: 18854.48
+Abono imputado: 1137.50
+Saldo a favor: 8.02
+Pendiente: 0.00
 Estado: SALDO A FAVOR
 ```
 
----
-
-### Caso 2 - Usuario con equipo cubierto paga mas que el abono
+### Caso 2 - Usuario con equipo cubierto paga mas que abono
 
 Entrada:
 
 ```text
-Equipo pendiente: 0,00
-Abono mes: 1178,13
-Pago recibido: 2000,00
+Equipo pendiente: 0.00
+Abono mes: 1178.13
+Pago recibido: 2000.00
 ```
 
 Salida esperada:
 
 ```text
-Abono imputado: 1178,13
-Saldo a favor: 821,87
-Pendiente: 0,00
+Abono imputado: 1178.13
+Saldo a favor: 821.87
+Pendiente: 0.00
 Estado: SALDO A FAVOR
 ```
-
----
 
 ### Caso 3 - Usuario con saldo a favor cubre el mes
 
 Entrada:
 
 ```text
-Saldo a favor previo: 2000,00
-Abono mes: 1178,13
-Pago recibido: 0,00
+Saldo a favor previo: 2000.00
+Abono mes: 1178.13
+Pago recibido: 0.00
 ```
 
 Salida esperada:
 
 ```text
-Pendiente: 0,00
-Saldo a favor final: 821,87
+Pendiente: 0.00
+Saldo a favor final: 821.87
 Estado: SALDO A FAVOR
 ```
 
----
-
-### Caso 4 - Usuario sin equipo pendiente paga parcialmente el abono
+### Caso 4 - Pago parcial de usuario sin equipo pendiente
 
 Entrada:
 
 ```text
-Equipo pendiente: 0,00
-Abono mes: 1178,13
-Pago recibido: 500,00
+Equipo pendiente: 0.00
+Abono mes: 1178.13
+Pago recibido: 500.00
 ```
 
 Salida esperada:
 
 ```text
-Pendiente: 678,13
+Pendiente: 678.13
 Estado: PARCIAL
 ```
-
----
 
 ### Caso 5 - Usuario nuevo intenta ingresar sin cubrir equipo y abono
 
 Entrada:
 
 ```text
-Equipo pendiente: 18854,48
-Abono mes: 1137,50
-Pago recibido: 10000,00
+Equipo pendiente: 18854.48
+Abono mes: 1137.50
+Pago recibido: 10000.00
 ```
 
 Salida esperada:
@@ -454,66 +508,39 @@ Mostrar error: Para ingresar debe cubrir equipo y abono del mes como minimo.
 
 ---
 
-## 15. Reglas de reparacion tecnica
+## Reglas tecnicas
 
-Durante la reparacion del motor:
-
-- No borrar pagos existentes.
-- No modificar nombres de personas.
-- No modificar datos reales manualmente desde codigo.
-- No hacer migraciones destructivas.
-- No tocar router, cierre, ZIP ni PWA en la primera etapa.
-- No crear nuevas fuentes paralelas de calculo.
-- No agregar pantallas nuevas.
-- No permitir que Mensajes calcule deuda distinto a Calculo mensual.
-- No permitir que Mi cuenta muestre valores distintos a Calculo mensual.
-
----
-
-## 16. Criterio de aceptacion
-
-La reparacion se considera correcta cuando, para una misma persona y un mismo mes:
-
-```text
-Calculo mensual = Mi cuenta = Mensajes
-```
-
-Y cuando se cumpla que:
-
-```text
-El equipo se divide entre usuarios activos.
-El abono se divide entre usuarios activos.
-Los pagos se cargan como monto total.
-La imputacion es automatica.
-El saldo a favor se aplica a meses futuros.
-Nadie ve totales globales como deuda personal.
-No existen deudas de equipo para usuarios ingresados validamente.
-```
+* Usar `round2` o equivalente existente.
+* No introducir librerias externas.
+* No modificar service worker.
+* No modificar PWA.
+* No borrar pagos.
+* No cambiar nombres de personas.
+* No hacer SQL destructivo.
+* No crear fuentes paralelas.
+* No dejar a Mensajes calculando por su cuenta.
+* No dejar a Mi cuenta calculando distinto a Calculo mensual.
+* Mantener textos fijos sin acentos.
 
 ---
 
-## 17. Orden recomendado de implementacion
+## Validaciones finales
 
-Primera etapa:
+Antes de terminar, correr:
 
-```text
-1. Reparar motor de cuenta corriente.
-2. Reparar carga de pagos.
-3. Reparar procesamiento de pago desde comprobante.
-4. Conectar Calculo mensual.
-5. Conectar Mi cuenta.
-6. Conectar Mensajes.
-7. Probar con casos reales.
+```cmd
+node --check js/app.js
 ```
 
-Segunda etapa:
+Si se modifican otros archivos JS, revisar sintaxis tambien con `node --check`.
 
-```text
-1. Conectar Panel mensual.
-2. Conectar Cierre mensual.
-3. Conectar Exportaciones.
-4. Conectar ZIP de cierre.
-5. Conectar Gestion router / MAC.
-```
+Informar al final:
 
-La segunda etapa no debe comenzar hasta que la primera etapa este validada.
+1. Archivos modificados.
+2. Si se creo migracion SQL nueva.
+3. Que SQL debo ejecutar en Supabase, si corresponde.
+4. Que pantallas quedaron conectadas a la fuente canonica.
+5. Que pruebas manuales debo correr.
+6. Confirmar que NO se tocaron router, cierre mensual, ZIP, PWA ni exportaciones.
+
+No hacer commit.
