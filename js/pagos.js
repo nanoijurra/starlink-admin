@@ -1,11 +1,13 @@
 import { CONCEPTOS_PAGO, escapeHtml, formatARS, round2 } from './utils.js';
 
+const CONCEPTOS_PAGO_VISIBLES = [...CONCEPTOS_PAGO, 'PAGO'];
+
 export function mesDesdeFechaPago(fechaPago) {
   return String(fechaPago || '').slice(0, 7);
 }
 
 export function conceptoOptions(selected = '') {
-  return CONCEPTOS_PAGO
+  return CONCEPTOS_PAGO_VISIBLES
     .map((concepto) => {
       return `<option value="${escapeHtml(concepto)}" ${concepto === selected ? 'selected' : ''}>${escapeHtml(concepto)}</option>`;
     })

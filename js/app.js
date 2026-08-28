@@ -78,6 +78,8 @@ const state = {
   comprobantesFiltro: 'PENDIENTE',
   comprobanteProcesandoId: null,
   comprobantesPagoEnProceso: new Set(),
+  pagoManualEnProceso: false,
+  pagoConfirmacionAbierta: false,
   calculo: null,
   calculosRpc: {}
 };
@@ -100,6 +102,119 @@ function setOk(message) {
 
 function setError(error) {
   showNotice(error?.message || String(error), 'error');
+}
+
+function describirErrorSupabasePago(error) {
+  const parts = [
+    error?.message,
+    error?.details,
+    error?.hint,
+    error?.code ? `Codigo: ${error.code}` : ''
+  ].filter(Boolean);
+  const texto = parts.join(' ');
+
+  if (error?.code === '23514' || /check constraint/i.test(texto)) {
+    return `Supabase rechazo el pago por una restriccion de datos. Si el detalle menciona pagos_concepto_check, ejecutar la migracion 011 para aceptar el concepto PAGO. Detalle: ${texto}`;
+  }
+  if (error?.code === '23502' || /null value/i.test(texto)) {
+    return `Supabase rechazo el pago porque falta un dato obligatorio. Revisar persona, fecha, mes aplicado auxiliar, concepto o monto. Detalle: ${texto}`;
+  }
+  if (error?.code === '42501' || /permission|row-level security|rls/i.test(texto)) {
+    return `Supabase rechazo el pago por permisos o RLS. Confirmar que el usuario sea ADMIN activo. Detalle: ${texto}`;
+  }
+
+  return `No se pudo registrar el pago en Supabase. Detalle: ${texto || String(error)}`;
+}
+
+function validarDatosPago({ personaId, fechaPago, monto, medio }) {
+  const montoNumero = normalizeNumber(monto);
+  const mesAuxiliar = mesDesdeFechaPago(fechaPago);
+  if (!personaId) throw new Error('Selecciona una persona.');
+  if (!fechaPago) throw new Error('Selecciona la fecha real de pago.');
+  if (!MES_CIERRE_PATTERN.test(mesAuxiliar)) throw new Error('La fecha de pago no es valida.');
+  if (!Number.isFinite(montoNumero) || montoNumero <= 0) throw new Error('El monto a registrar debe ser mayor que cero.');
+  if (!String(medio || '').trim()) throw new Error('Indica el medio de pago.');
+
+  return {
+    personaId,
+    fechaPago,
+    monto: montoNumero,
+    medio: String(medio || '').trim(),
+    observaciones: null
+  };
+}
+
+function ensurePagoConfirmacionModal() {
+  let modal = byId('pago-confirmacion-modal');
+  if (modal) return modal;
+
+  modal = document.createElement('div');
+  modal.id = 'pago-confirmacion-modal';
+  modal.className = 'payment-confirm-modal';
+  modal.hidden = true;
+  document.body.appendChild(modal);
+  return modal;
+}
+
+function mostrarConfirmacionPago({ persona, fechaPago, monto, medio, observaciones, comprobante = null, onConfirm }) {
+  return new Promise((resolve) => {
+    const modal = ensurePagoConfirmacionModal();
+    const obs = String(observaciones || '').trim();
+    const archivo = comprobante?.archivo_nombre || comprobante?.archivo_path || '';
+    modal.hidden = false;
+    let guardando = false;
+    modal.innerHTML = `
+      <div class="payment-confirm-backdrop" data-pago-confirm-modificar></div>
+      <article class="payment-confirm-card" role="dialog" aria-modal="true" aria-labelledby="pago-confirmacion-title">
+        <h2 id="pago-confirmacion-title">CONTROLAR PAGO ANTES DE REGISTRAR</h2>
+        <p class="payment-confirm-warning">Controle bien el importe antes de confirmar.<br>Una vez cargado, no se puede deshacer automaticamente desde esta pantalla.</p>
+        <div class="payment-confirm-amount">${formatARS(monto)}</div>
+        <p class="payment-confirm-error" data-pago-confirm-error hidden></p>
+        <dl class="payment-confirm-details">
+          <div><dt>Persona</dt><dd>${escapeHtml(persona?.nombre || 'Sin persona')}</dd></div>
+          <div><dt>Fecha de pago</dt><dd>${escapeHtml(fechaPago)}</dd></div>
+          <div><dt>Medio</dt><dd>${escapeHtml(medio)}</dd></div>
+          ${obs ? `<div><dt>Observacion</dt><dd>${escapeHtml(obs)}</dd></div>` : ''}
+          ${archivo ? `<div><dt>Comprobante</dt><dd>${escapeHtml(archivo)}</dd></div>` : ''}
+        </dl>
+        <div class="form-actions">
+          <button type="button" data-pago-confirm-modificar>Modificar</button>
+          <button type="button" class="primary" data-pago-confirm-guardar>Confirmar pago</button>
+        </div>
+      </article>
+    `;
+
+    const cerrar = (resultado) => {
+      modal.hidden = true;
+      modal.innerHTML = '';
+      resolve(resultado);
+    };
+    modal.querySelectorAll('[data-pago-confirm-modificar]').forEach((button) => {
+      button.addEventListener('click', () => {
+        if (!guardando) cerrar(false);
+      });
+    });
+    modal.querySelector('[data-pago-confirm-guardar]')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      guardando = true;
+      button.disabled = true;
+      button.textContent = 'Registrando...';
+      try {
+        await onConfirm();
+        cerrar(true);
+      } catch (error) {
+        guardando = false;
+        button.disabled = false;
+        button.textContent = 'Confirmar pago';
+        const errorNode = modal.querySelector('[data-pago-confirm-error]');
+        if (errorNode) {
+          errorNode.textContent = error?.message || String(error);
+          errorNode.hidden = false;
+        }
+        setError(error);
+      }
+    });
+  });
 }
 
 function validarMesCierre(mes) {
@@ -2289,79 +2404,25 @@ async function handleMiCuentaComprobanteSubmit(event) {
 }
 
 async function registrarPagoReal({ personaId, monto, fechaPago, medio, observaciones }) {
-  const montoPagado = normalizeNumber(monto);
-  const mesLegado = mesDesdeFechaPago(fechaPago);
-  if (!personaId) throw new Error('Falta persona asociada al pago.');
-  if (!MES_CIERRE_PATTERN.test(mesLegado)) throw new Error('La fecha de pago no es valida.');
-  if (!Number.isFinite(montoPagado) || montoPagado <= 0) throw new Error('El monto a registrar no es valido.');
+  const datos = validarDatosPago({ personaId, fechaPago, monto, medio });
+  const mesLegado = mesDesdeFechaPago(datos.fechaPago);
 
-  const persona = state.personas.find((item) => mismaPersona(item.id, personaId));
-  const calculo = await obtenerCalculoMensualEstado(mesLegado, true);
-  const cargo = calculo.cargos.find((item) => mismaPersona(item.persona_id, personaId));
-  const equipoPendiente = round2(Math.max(Number(cargo?.equipo_pendiente || 0), 0));
-  const pendienteTotal = round2(Math.max(Number(cargo?.monto_a_pagar || 0), 0));
-  const abonoPendiente = round2(Math.max(Number(cargo?.abono_pendiente ?? pendienteTotal - equipoPendiente), 0));
-  const minimoIngreso = round2(equipoPendiente + abonoPendiente);
-
-  if (equipoPendiente > 0.01 && montoPagado + 0.01 < minimoIngreso) {
-    throw new Error('Para ingresar debe cubrir equipo y abono del mes como minimo.');
-  }
-
-  let restante = montoPagado;
-  const componentes = [];
-
-  if (equipoPendiente > 0.01 && restante > 0.01) {
-    const montoEquipo = round2(Math.min(restante, equipoPendiente));
-    componentes.push({
-      concepto: persona?.es_fundador ? 'COMPRA_INICIAL' : 'REGULARIZACION',
-      monto: montoEquipo,
-      observaciones: observaciones?.trim() || null
-    });
-    restante = round2(restante - montoEquipo);
-  }
-
-  if (abonoPendiente > 0.01 && restante > 0.01) {
-    const montoAbono = round2(Math.min(restante, abonoPendiente));
-    componentes.push({
-      concepto: 'ABONO',
-      monto: montoAbono,
-      observaciones: observaciones?.trim() || null
-    });
-    restante = round2(restante - montoAbono);
-  }
-
-  if (restante > 0.01) {
-    componentes.push({
-      concepto: 'AJUSTE',
-      monto: restante,
-      observaciones: observaciones?.trim() || 'Ajuste automatico por pago excedente'
-    });
-  }
-
-  if (!componentes.length) {
-    componentes.push({
-      concepto: 'AJUSTE',
-      monto: montoPagado,
-      observaciones: observaciones?.trim() || null
-    });
-  }
-
-  const payload = componentes.map((componente) => ({
-    persona_id: personaId,
-    fecha_pago: fechaPago,
+  const payload = {
+    persona_id: datos.personaId,
+    fecha_pago: datos.fechaPago,
     mes_aplicado: mesLegado,
-    medio: medio || 'TRANSFERENCIA',
-    observaciones: componente.observaciones,
+    medio: datos.medio || 'TRANSFERENCIA',
+    observaciones: observaciones?.trim() || null,
     created_by: state.session?.user?.id || null,
-    concepto: componente.concepto,
-    monto: componente.monto
-  }));
+    concepto: 'PAGO',
+    monto: datos.monto
+  };
 
   const { data, error } = await state.supabase
     .from('pagos')
     .insert(payload)
     .select('id');
-  if (error) throw error;
+  if (error) throw new Error(describirErrorSupabasePago(error));
   return data || [];
 }
 
@@ -2374,18 +2435,11 @@ async function handleComprobantePagoSubmit(event) {
   const form = event.target;
   const submitButton = form.querySelector('button[type="submit"]');
   const raw = formToObject(form);
-  if (state.comprobantesPagoEnProceso.has(raw.comprobante_id)) {
+  if (state.comprobantesPagoEnProceso.has(raw.comprobante_id) || state.pagoConfirmacionAbierta) {
     return setError('Este comprobante ya se esta procesando.');
   }
 
-  state.comprobantesPagoEnProceso.add(raw.comprobante_id);
-  if (submitButton) {
-    submitButton.disabled = true;
-    submitButton.textContent = 'Registrando...';
-  }
-
   const comprobante = state.comprobantes.find((item) => item.id === raw.comprobante_id);
-  let mantenerBloqueo = false;
 
   try {
     if (!comprobante) throw new Error('No se encontro el comprobante.');
@@ -2396,70 +2450,95 @@ async function handleComprobantePagoSubmit(event) {
       throw new Error('El comprobante no tiene persona asociada.');
     }
 
-    const monto = normalizeNumber(raw.monto);
-    if (!Number.isFinite(monto) || monto <= 0) {
-      throw new Error('El monto a registrar no es valido.');
-    }
+    const datos = validarDatosPago({
+      personaId: comprobante.persona_id,
+      fechaPago: raw.fecha_pago,
+      monto: raw.monto,
+      medio: raw.medio || 'TRANSFERENCIA'
+    });
 
     const persona = state.personas.find((item) => mismaPersona(item.id, comprobante.persona_id));
-    const mensaje = `Registrar pago de ${formatARS(monto)} para ${persona?.nombre || 'esta persona'} con fecha ${raw.fecha_pago}?`;
-    if (!confirm(mensaje)) return;
+    state.pagoConfirmacionAbierta = true;
+    await mostrarConfirmacionPago({
+      persona,
+      fechaPago: datos.fechaPago,
+      monto: datos.monto,
+      medio: datos.medio,
+      observaciones: raw.observaciones?.trim() || '',
+      comprobante,
+      onConfirm: async () => {
+        if (state.comprobantesPagoEnProceso.has(raw.comprobante_id)) {
+          throw new Error('Este comprobante ya se esta procesando.');
+        }
 
-    setLoading('Registrando pago desde comprobante...');
-    const { data: comprobanteActual, error: comprobanteError } = await state.supabase
-      .from('comprobantes_pago')
-      .select('id, persona_id, mes_aplicado, archivo_nombre, estado, pago_ids')
-      .eq('id', comprobante.id)
-      .single();
-    if (comprobanteError) throw comprobanteError;
-    if ((comprobanteActual.estado || 'PENDIENTE') !== 'PENDIENTE') {
-      throw new Error('El comprobante ya no esta PENDIENTE. No se insertaron pagos.');
-    }
-    if (comprobantePagoIds(comprobanteActual).length > 0) {
-      throw new Error('El comprobante ya tiene pagos asociados. No se insertaron pagos.');
-    }
+        let mantenerBloqueo = false;
+        state.comprobantesPagoEnProceso.add(raw.comprobante_id);
+        if (submitButton) {
+          submitButton.disabled = true;
+          submitButton.textContent = 'Registrando...';
+        }
 
-    const observaciones = raw.observaciones?.trim()
-      || `Registrado desde comprobante ${comprobanteActual.archivo_nombre || comprobante.id}`;
-    const pagosCreados = await registrarPagoReal({
-      personaId: comprobanteActual.persona_id,
-      monto,
-      fechaPago: raw.fecha_pago,
-      medio: raw.medio || 'TRANSFERENCIA',
-      observaciones
+        try {
+          setLoading('Registrando pago desde comprobante...');
+          const { data: comprobanteActual, error: comprobanteError } = await state.supabase
+            .from('comprobantes_pago')
+            .select('id, persona_id, mes_aplicado, archivo_nombre, estado, pago_ids')
+            .eq('id', comprobante.id)
+            .single();
+          if (comprobanteError) throw comprobanteError;
+          if ((comprobanteActual.estado || 'PENDIENTE') !== 'PENDIENTE') {
+            throw new Error('El comprobante ya no esta PENDIENTE. No se insertaron pagos.');
+          }
+          if (comprobantePagoIds(comprobanteActual).length > 0) {
+            throw new Error('El comprobante ya tiene pagos asociados. No se insertaron pagos.');
+          }
+
+          const observaciones = raw.observaciones?.trim()
+            || `Registrado desde comprobante ${comprobanteActual.archivo_nombre || comprobante.id}`;
+          const pagosCreados = await registrarPagoReal({
+            personaId: comprobanteActual.persona_id,
+            monto: datos.monto,
+            fechaPago: datos.fechaPago,
+            medio: datos.medio,
+            observaciones
+          });
+          const pagoIds = pagosCreados.map((pago) => pago.id).filter(Boolean);
+          const { error: updateError } = await state.supabase
+            .from('comprobantes_pago')
+            .update({
+              estado: 'PROCESADO',
+              revisado_at: new Date().toISOString(),
+              revisado_by: state.session?.user?.id || null,
+              pago_ids: pagoIds
+            })
+            .eq('id', comprobante.id)
+            .eq('estado', 'PENDIENTE')
+            .select('id')
+            .single();
+          if (updateError) {
+            mantenerBloqueo = true;
+            throw new Error(`Los pagos se crearon, pero no se pudo marcar el comprobante como PROCESADO: ${updateError.message}`);
+          }
+
+          state.comprobanteProcesandoId = null;
+          state.comprobantesFiltro = 'PROCESADO';
+          await loadData();
+          setOk('Pago registrado y comprobante marcado como PROCESADO.');
+        } finally {
+          if (!mantenerBloqueo) {
+            state.comprobantesPagoEnProceso.delete(raw.comprobante_id);
+            if (submitButton) {
+              submitButton.disabled = false;
+              submitButton.textContent = 'Confirmar y registrar pago';
+            }
+          }
+        }
+      }
     });
-    const pagoIds = pagosCreados.map((pago) => pago.id).filter(Boolean);
-    const { error: updateError } = await state.supabase
-      .from('comprobantes_pago')
-      .update({
-        estado: 'PROCESADO',
-        revisado_at: new Date().toISOString(),
-        revisado_by: state.session?.user?.id || null,
-        pago_ids: pagoIds
-      })
-      .eq('id', comprobante.id)
-      .eq('estado', 'PENDIENTE')
-      .select('id')
-      .single();
-    if (updateError) {
-      mantenerBloqueo = true;
-      throw new Error(`Los pagos se crearon, pero no se pudo marcar el comprobante como PROCESADO: ${updateError.message}`);
-    }
-
-    state.comprobanteProcesandoId = null;
-    state.comprobantesFiltro = 'PROCESADO';
-    await loadData();
-    setOk('Pago registrado y comprobante marcado como PROCESADO.');
   } catch (error) {
     setError(error);
   } finally {
-    if (!mantenerBloqueo) {
-      state.comprobantesPagoEnProceso.delete(raw.comprobante_id);
-      if (submitButton) {
-        submitButton.disabled = false;
-        submitButton.textContent = 'Confirmar y registrar pago';
-      }
-    }
+    state.pagoConfirmacionAbierta = false;
   }
 }
 
@@ -2786,26 +2865,56 @@ async function handleUsuariosClick(event) {
 async function savePago(event) {
   event.preventDefault();
   if (!isAdmin()) return setError('Tu rol permite lectura, no modificacion.');
+  if (state.pagoManualEnProceso || state.pagoConfirmacionAbierta) {
+    return setError('Ya hay un pago pendiente de confirmacion o registro.');
+  }
 
   const form = event.currentTarget || byId('pago-form');
   if (!form) return setError('No se encontro el formulario de pagos.');
 
   const raw = formToObject(form);
   try {
-    await registrarPagoReal({
+    const datos = validarDatosPago({
       personaId: raw.persona_id,
       monto: raw.monto,
       fechaPago: raw.fecha_pago,
-      medio: raw.medio || 'TRANSFERENCIA',
-      observaciones: raw.observaciones?.trim() || null
+      medio: raw.medio || 'TRANSFERENCIA'
     });
-    form.reset();
-    form.elements.fecha_pago.value = new Date().toISOString().slice(0, 10);
-    form.elements.medio.value = 'TRANSFERENCIA';
-    await loadData();
-    setOk('Pago registrado.');
+    const persona = state.personas.find((item) => mismaPersona(item.id, datos.personaId));
+    state.pagoConfirmacionAbierta = true;
+    await mostrarConfirmacionPago({
+      persona,
+      fechaPago: datos.fechaPago,
+      monto: datos.monto,
+      medio: datos.medio,
+      observaciones: raw.observaciones?.trim() || '',
+      onConfirm: async () => {
+        if (state.pagoManualEnProceso) {
+          throw new Error('El pago ya se esta registrando.');
+        }
+        state.pagoManualEnProceso = true;
+        try {
+          await registrarPagoReal({
+            personaId: datos.personaId,
+            monto: datos.monto,
+            fechaPago: datos.fechaPago,
+            medio: datos.medio,
+            observaciones: raw.observaciones?.trim() || null
+          });
+          form.reset();
+          form.elements.fecha_pago.value = new Date().toISOString().slice(0, 10);
+          form.elements.medio.value = 'TRANSFERENCIA';
+          await loadData();
+          setOk('Pago registrado.');
+        } finally {
+          state.pagoManualEnProceso = false;
+        }
+      }
+    });
   } catch (error) {
     setError(error);
+  } finally {
+    state.pagoConfirmacionAbierta = false;
   }
 }
 
