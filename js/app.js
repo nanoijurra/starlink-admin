@@ -352,50 +352,311 @@ function renderAll() {
 async function renderDashboard() {
   const mes = byId('dashboard-mes').value || currentMonth();
   const container = byId('dashboard-cards');
-  const activos = state.personas.filter((persona) => persona.estado === 'ACTIVO');
-  const metricsBase = [
-    ['Usuarios activos', activos.length],
-    ['Fundadores activos', activos.filter((persona) => persona.es_fundador).length],
-    ['Ingresantes posteriores activos', activos.filter((persona) => !persona.es_fundador).length],
-    ['Pendientes de vinculacion/alta', state.personas.filter((persona) => persona.estado === 'PENDIENTE').length],
-    ['Suspendidos por mora', state.personas.filter((persona) => persona.estado === 'SUSPENDIDO_MORA').length],
-    ['Bajas definitivas', state.personas.filter((persona) => persona.estado === 'BAJA_DEFINITIVA').length]
-  ];
+  if (!container) return;
 
   try {
-    const calculo = await obtenerCalculoMensualEstado(mes);
-    const cuentas = calculo.cargos.map((cargo) => estadoCuentaCargo(cargo));
-    const totalMes = round2(cuentas.reduce((total, cuenta) => total + Number(cuenta.totalDelMes || 0), 0));
-    const totalPagado = round2(cuentas.reduce((total, cuenta) => total + Number(cuenta.pagado || 0), 0));
-    const totalPendiente = round2(cuentas.reduce((total, cuenta) => total + Number(cuenta.pendiente || 0), 0));
-    const totalSaldoFavor = round2(cuentas.reduce((total, cuenta) => total + Number(cuenta.saldoAFavor || 0), 0));
-    const personasConDeuda = cuentas.filter((cuenta) => cuenta.pendiente > 0.01).length;
-    const personasAlDia = cuentas.filter((cuenta) => cuenta.pendiente <= 0.01 && cuenta.estado !== 'Sin cargo').length;
-    const personasSaldoFavor = cuentas.filter((cuenta) => cuenta.saldoAFavor > 0.01).length;
-
-    const metrics = [
-      ...metricsBase,
-      ['Total cargos del mes', formatARS(totalMes)],
-      ['Total pagado del mes', formatARS(totalPagado)],
-      ['Pendiente hoy', formatARS(totalPendiente)],
-      ['Saldo a favor', formatARSNegativoVisual(totalSaldoFavor)],
-      ['Personas con deuda', personasConDeuda],
-      ['Personas al dia', personasAlDia],
-      ['Personas con saldo a favor', personasSaldoFavor]
-    ];
-
-    container.innerHTML = metrics
-      .map(([label, value]) => `<article class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`)
-      .join('');
+    container.innerHTML = await renderDashboardDesdeRpc(mes);
   } catch (error) {
-    container.innerHTML = [
-      ...metricsBase,
-      ['Estado mensual', 'No disponible']
-    ]
-      .map(([label, value]) => `<article class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`)
-      .join('');
+    container.innerHTML = '<p class="notice" data-type="error">No se pudo calcular el dashboard.</p>';
     setError(error);
   }
+}
+
+function estadoCanonicoRpc(estado) {
+  const value = asciiGeneratedText(estado).toUpperCase();
+  if (value === 'AL DIA') return 'AL DIA';
+  if (value === 'SALDO A FAVOR') return 'SALDO A FAVOR';
+  if (value === 'PENDIENTE') return 'PENDIENTE';
+  if (value === 'PARCIAL') return 'PARCIAL';
+  if (value === 'SIN CARGO') return 'SIN CARGO';
+  return value || 'SIN CARGO';
+}
+
+function filaResumenCuenta(cargo) {
+  const estado = estadoCanonicoRpc(cargo.__cuenta?.estado);
+  return {
+    persona: cargo.persona,
+    persona_id: cargo.persona_id,
+    estado,
+    totalCargosMes: round2(Number(cargo.total_cargos_mes || 0)),
+    pagosDelMes: round2(Number(cargo.pagos_del_mes || 0)),
+    pendienteHoy: round2(Number(cargo.monto_a_pagar || 0)),
+    saldoAFavorFinal: round2(Number(cargo.saldo_a_favor_final || 0)),
+    observacion: cargo.__observacion || cargo.concepto || ''
+  };
+}
+
+function resumenCuentaMensual(calculo) {
+  const filas = (calculo.cargos || []).map(filaResumenCuenta);
+  return {
+    filas,
+    totalCargosPeriodo: round2(filas.reduce((total, fila) => total + fila.totalCargosMes, 0)),
+    totalPagosPeriodo: round2(filas.reduce((total, fila) => total + fila.pagosDelMes, 0)),
+    pendienteTotalActual: round2(filas.reduce((total, fila) => total + fila.pendienteHoy, 0)),
+    saldoAFavorTotal: round2(filas.reduce((total, fila) => total + fila.saldoAFavorFinal, 0)),
+    alDia: filas.filter((fila) => fila.estado === 'AL DIA').length,
+    saldoAFavor: filas.filter((fila) => fila.estado === 'SALDO A FAVOR').length,
+    pendientes: filas.filter((fila) => fila.estado === 'PENDIENTE').length,
+    parciales: filas.filter((fila) => fila.estado === 'PARCIAL').length,
+    conDeuda: filas.filter((fila) => fila.pendienteHoy > 0.01).length
+  };
+}
+
+async function datosResumenMensualDesdeRpc(mes) {
+  const mesNormalizado = normalizarMesClave(mes || currentMonth());
+  const calculo = await obtenerCalculoMensualEstado(mesNormalizado, true);
+  const resumen = resumenCuentaMensual(calculo);
+  const comprobantesPendientes = state.comprobantes.filter((comprobante) => (
+    (comprobante.estado || 'PENDIENTE') === 'PENDIENTE' &&
+    comprobante.mes_aplicado === mesNormalizado
+  ));
+
+  return {
+    mes: mesNormalizado,
+    calculo,
+    resumen,
+    comprobantesPendientes
+  };
+}
+
+function metricCard(label, value, detail = '', tone = '') {
+  return `
+    <article class="metric ${tone ? `metric-${escapeHtml(tone)}` : ''}">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+      ${detail ? `<small>${escapeHtml(detail)}</small>` : ''}
+    </article>
+  `;
+}
+
+function renderDeudoresPrincipales(filas, limite = 12) {
+  const rows = filas
+    .filter((fila) => fila.pendienteHoy > 0.01)
+    .sort((a, b) => b.pendienteHoy - a.pendienteHoy || (a.persona?.nombre || '').localeCompare(b.persona?.nombre || ''))
+    .slice(0, limite)
+    .map((fila) => `
+      <tr>
+        <td>${escapeHtml(fila.persona?.nombre || 'Sin persona')}</td>
+        <td class="number pending-due">${formatARS(fila.pendienteHoy)}</td>
+        <td><span class="status-pill status-${estadoClass(estadoRpcToUi(fila.estado))}">${escapeHtml(estadoRpcToUi(fila.estado))}</span></td>
+      </tr>
+    `);
+
+  return `
+    <section class="panel-block">
+      <h3>Deudores principales</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Persona</th><th>Pendiente hoy</th><th>Estado</th></tr></thead>
+          <tbody>${rows.join('') || '<tr><td colspan="3">Sin personas con deuda.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderListaSimpleComprobantesPendientes(comprobantesPendientes, limite = 5) {
+  const rows = comprobantesPendientes
+    .slice(0, limite)
+    .map((comprobante) => {
+      const persona = state.personas.find((item) => mismaPersona(item.id, comprobante.persona_id));
+      return `
+        <tr>
+          <td>${escapeHtml(persona?.nombre || 'Sin persona')}</td>
+          <td>${comprobante.monto_informado == null ? '-' : formatARS(comprobante.monto_informado)}</td>
+        </tr>
+      `;
+    });
+
+  if (!comprobantesPendientes.length) return '';
+
+  return `
+    <section class="panel-block">
+      <h3>Comprobantes pendientes</h3>
+      <p class="muted">${escapeHtml(String(comprobantesPendientes.length))} pendiente(s) para revisar.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Persona</th><th>Monto informado</th></tr></thead>
+          <tbody>${rows.join('')}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderSaldosAFavor(filas) {
+  const rows = filas
+    .filter((fila) => fila.saldoAFavorFinal > 0.01)
+    .sort((a, b) => b.saldoAFavorFinal - a.saldoAFavorFinal || (a.persona?.nombre || '').localeCompare(b.persona?.nombre || ''))
+    .slice(0, 12)
+    .map((fila) => `
+      <tr>
+        <td>${escapeHtml(fila.persona?.nombre || 'Sin persona')}</td>
+        <td class="number saldo-favor">${formatARSNegativoVisual(fila.saldoAFavorFinal)}</td>
+      </tr>
+    `);
+
+  return `
+    <section class="panel-block">
+      <h3>Saldos a favor</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Persona</th><th>Saldo a favor</th></tr></thead>
+          <tbody>${rows.join('') || '<tr><td colspan="2">Sin saldos a favor.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderPendientesRpc(filas) {
+  const rows = filas
+    .filter((fila) => fila.estado === 'PENDIENTE')
+    .sort((a, b) => b.pendienteHoy - a.pendienteHoy || (a.persona?.nombre || '').localeCompare(b.persona?.nombre || ''))
+    .map((fila) => `
+      <tr>
+        <td>${escapeHtml(fila.persona?.nombre || 'Sin persona')}</td>
+        <td class="number pending-due">${formatARS(fila.pendienteHoy)}</td>
+      </tr>
+    `);
+
+  return `
+    <section class="panel-block">
+      <h3>Pendientes</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Persona</th><th>Pendiente hoy</th></tr></thead>
+          <tbody>${rows.join('') || '<tr><td colspan="2">Sin pendientes.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderParcialesRpc(filas) {
+  const rows = filas
+    .filter((fila) => fila.estado === 'PARCIAL')
+    .sort((a, b) => b.pendienteHoy - a.pendienteHoy || (a.persona?.nombre || '').localeCompare(b.persona?.nombre || ''))
+    .map((fila) => `
+      <tr>
+        <td>${escapeHtml(fila.persona?.nombre || 'Sin persona')}</td>
+        <td class="number pending-due">${formatARS(fila.pendienteHoy)}</td>
+        <td class="number money-paid">${formatARS(fila.pagosDelMes)}</td>
+      </tr>
+    `);
+
+  return `
+    <section class="panel-block">
+      <h3>Parciales</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Persona</th><th>Pendiente hoy</th><th>Pagos del periodo</th></tr></thead>
+          <tbody>${rows.join('') || '<tr><td colspan="3">Sin pagos parciales.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderPagosRecientesPeriodo(mes) {
+  const personaPorId = new Map(state.personas.map((persona) => [persona.id, persona]));
+  const rows = state.pagos
+    .filter((pago) => mesDesdeFechaPago(pago.fecha_pago) === mes)
+    .sort((a, b) => `${b.fecha_pago}${b.created_at || ''}`.localeCompare(`${a.fecha_pago}${a.created_at || ''}`))
+    .slice(0, 12)
+    .map((pago) => `
+      <tr>
+        <td>${escapeHtml(pago.fecha_pago || '')}</td>
+        <td>${escapeHtml(personaPorId.get(pago.persona_id)?.nombre || 'Sin persona')}</td>
+        <td class="number money-paid">${formatARS(pago.monto || 0)}</td>
+      </tr>
+    `);
+
+  return `
+    <section class="panel-block">
+      <h3>Pagos recientes del periodo</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Fecha</th><th>Persona</th><th>Monto</th></tr></thead>
+          <tbody>${rows.join('') || '<tr><td colspan="3">Sin pagos registrados en el periodo.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderComprobantesPendientesResumen(comprobantesPendientes) {
+  const rows = comprobantesPendientes
+    .slice(0, 12)
+    .map((comprobante) => {
+      const persona = state.personas.find((item) => mismaPersona(item.id, comprobante.persona_id));
+      return `
+        <tr>
+          <td>${escapeHtml(persona?.nombre || 'Sin persona')}</td>
+          <td>${escapeHtml(comprobante.mes_aplicado || '')}</td>
+          <td class="number">${comprobante.monto_informado == null ? '-' : formatARS(comprobante.monto_informado)}</td>
+          <td>${escapeHtml(comprobante.archivo_nombre || '')}</td>
+        </tr>
+      `;
+    });
+
+  return `
+    <section class="panel-block">
+      <h3>Comprobantes pendientes</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Persona</th><th>Mes informado</th><th>Monto informado</th><th>Archivo</th></tr></thead>
+          <tbody>${rows.join('') || '<tr><td colspan="4">Sin comprobantes pendientes.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+async function renderDashboardDesdeRpc(mes) {
+  const { mes: mesNormalizado, resumen, comprobantesPendientes } = await datosResumenMensualDesdeRpc(mes);
+
+  return `
+    <div class="summary-line">
+      <span>Mes: <strong>${escapeHtml(mesNormalizado)}</strong></span>
+      <span>Fuente: <strong>get_calculo_mensual_estado</strong></span>
+    </div>
+    <div class="metric-grid dashboard-metric-grid">
+      ${metricCard('Cargos del periodo', formatARS(resumen.totalCargosPeriodo), 'Suma de total_cargos_mes', 'neutral')}
+      ${metricCard('Pagos del periodo', formatARS(resumen.totalPagosPeriodo), 'Suma de pagos_del_mes', 'ok')}
+      ${metricCard('Pendiente total actual', formatARS(resumen.pendienteTotalActual), 'Suma de pendiente_hoy', resumen.pendienteTotalActual > 0.01 ? 'danger' : 'ok')}
+      ${metricCard('Saldo a favor total', formatARSNegativoVisual(resumen.saldoAFavorTotal), 'Suma de saldo_a_favor_final', resumen.saldoAFavorTotal > 0.01 ? 'ok' : 'neutral')}
+      ${metricCard('Comprobantes pendientes', String(comprobantesPendientes.length), 'Conteo independiente de deuda', comprobantesPendientes.length ? 'warning' : 'neutral')}
+    </div>
+    <div class="dashboard-lists">
+      ${renderDeudoresPrincipales(resumen.filas, 5)}
+      ${renderListaSimpleComprobantesPendientes(comprobantesPendientes, 5)}
+    </div>
+  `;
+}
+
+async function renderPanelMensualDesdeRpc(mes) {
+  const { mes: mesNormalizado, resumen, comprobantesPendientes } = await datosResumenMensualDesdeRpc(mes);
+
+  return `
+    <div class="summary-line">
+      <span>Mes: <strong>${escapeHtml(mesNormalizado)}</strong></span>
+      <span>Fuente: <strong>get_calculo_mensual_estado</strong></span>
+    </div>
+    <div class="panel-metric-grid">
+      ${panelMetricCard('Pendientes', String(resumen.pendientes), formatARS(resumen.pendienteTotalActual), resumen.pendientes ? 'danger' : 'neutral', 'pagos')}
+      ${panelMetricCard('Parciales', String(resumen.parciales), 'Tienen pago y saldo pendiente', resumen.parciales ? 'warning' : 'neutral', 'pagos')}
+      ${panelMetricCard('Saldos a favor', String(resumen.saldoAFavor), formatARSNegativoVisual(resumen.saldoAFavorTotal), resumen.saldoAFavor ? 'ok' : 'neutral')}
+      ${panelMetricCard('Comprobantes pendientes', String(comprobantesPendientes.length), 'Requieren revision', comprobantesPendientes.length ? 'warning' : 'neutral', 'comprobantes')}
+    </div>
+    <div class="dashboard-lists">
+      ${renderPendientesRpc(resumen.filas)}
+      ${renderParcialesRpc(resumen.filas)}
+      ${renderSaldosAFavor(resumen.filas)}
+      ${renderComprobantesPendientesResumen(comprobantesPendientes)}
+      ${renderPagosRecientesPeriodo(mesNormalizado)}
+    </div>
+  `;
 }
 
 function panelMonth() {
@@ -635,49 +896,12 @@ async function renderPanelMensual() {
   }
 
   const mes = panelMonth();
-  let cuentas = [];
   try {
-    cuentas = await cuentasOperativasDelMes(mes);
+    container.innerHTML = await renderPanelMensualDesdeRpc(mes);
   } catch (error) {
     container.innerHTML = '<p class="notice" data-type="error">No se pudo calcular el panel mensual.</p>';
     setError(error);
-    return;
   }
-  const comprobantesPendientes = state.comprobantes.filter((comprobante) => (
-    (comprobante.estado || 'PENDIENTE') === 'PENDIENTE' &&
-    comprobante.mes_aplicado === mes
-  ));
-  const alDia = cuentas.filter((item) => item.alDia);
-  const sinProblemaOperativo = cuentas.filter((item) => item.sinProblemaOperativo);
-  const conDeuda = cuentas.filter((item) => item.conDeuda);
-  const parciales = cuentas.filter((item) => item.pagoParcial);
-  const saldoFavor = cuentas.filter((item) => item.saldoAFavor);
-  const pagadoYBloqueado = cuentas.filter((item) => item.pagadoYBloqueado);
-  const debeYHabilitado = cuentas.filter((item) => item.debeYHabilitado);
-  const sinMac = cuentas.filter((item) => item.sinMac);
-  const totalPendiente = round2(conDeuda.reduce((total, item) => total + item.cuenta.pendiente, 0));
-  const totalSaldoFavor = round2(saldoFavor.reduce((total, item) => total + item.saldoFavorVisual, 0));
-
-  container.innerHTML = `
-    <div class="summary-line">
-      <span>Mes operativo: <strong>${escapeHtml(mes)}</strong></span>
-      <span>Personas activas: <strong>${cuentas.length}</strong></span>
-    </div>
-    <div class="panel-metric-grid">
-      ${panelMetricCard('Comprobantes pendientes', String(comprobantesPendientes.length), 'Requieren revision ADMIN', 'warning', 'comprobantes')}
-      ${panelMetricCard('Personas al dia', String(alDia.length), 'Pendiente $0 segun estado mensual', 'ok')}
-      ${panelMetricCard('Personas con deuda', String(conDeuda.length), `Total pendiente ${formatARS(totalPendiente)}`, 'danger', 'pagos')}
-      ${panelMetricCard('Pagos parciales', String(parciales.length), 'Tienen pago y saldo pendiente', 'warning', 'pagos')}
-      ${panelMetricCard('Saldo a favor', String(saldoFavor.length), `Total ${formatARSNegativoVisual(totalSaldoFavor)}`, 'ok')}
-      ${panelMetricCard('Sin problema operativo', String(sinProblemaOperativo.length), 'Al dia, con MAC y router coherente', 'ok')}
-      ${panelMetricCard('Pago y bloqueado', String(pagadoYBloqueado.length), 'Accion sugerida: habilitar MAC', 'warning', 'router')}
-      ${panelMetricCard('Debe y habilitado', String(debeYHabilitado.length), 'Accion sugerida: bloquear MAC', 'danger', 'router')}
-      ${panelMetricCard('Personas sin MAC', String(sinMac.length), 'Accion sugerida: pedir/cargar MAC', 'neutral', 'personas')}
-    </div>
-    ${renderAccionesUrgentes(comprobantesPendientes, cuentas)}
-    ${renderPendientesPago(cuentas)}
-    ${renderAlertasRouter(cuentas)}
-  `;
 }
 
 function cierreCheckItem({ titulo, estado, texto, detalle, destino }) {
@@ -721,169 +945,72 @@ async function renderCierreMensual() {
   }
 
   const mes = cierreMonth();
-  let cuentas = [];
+  let datos = null;
   try {
-    cuentas = await cuentasOperativasDelMes(mes);
+    datos = await datosResumenMensualDesdeRpc(mes);
   } catch (error) {
     container.innerHTML = '<p class="notice" data-type="error">No se pudo calcular el checklist mensual.</p>';
     setError(error);
     return;
   }
-  const comprobantesMes = state.comprobantes.filter((comprobante) => comprobante.mes_aplicado === mes);
-  const comprobantesPendientes = comprobantesMes.filter((comprobante) => (comprobante.estado || 'PENDIENTE') === 'PENDIENTE');
-  const comprobantesDescartados = comprobantesMes.filter((comprobante) => comprobante.estado === 'DESCARTADO');
-  const conDeuda = cuentas.filter((item) => item.conDeuda);
-  const parciales = cuentas.filter((item) => item.pagoParcial);
-  const saldoFavor = cuentas.filter((item) => item.saldoAFavor);
-  const debeYHabilitado = cuentas.filter((item) => item.debeYHabilitado);
-  const pagadoYBloqueado = cuentas.filter((item) => item.pagadoYBloqueado);
-  const sinMac = cuentas.filter((item) => item.sinMac);
-  const totalPendiente = round2(conDeuda.reduce((total, item) => total + item.cuenta.pendiente, 0));
-  const totalSaldoFavor = round2(saldoFavor.reduce((total, item) => total + item.saldoFavorVisual, 0));
-  const requiereRevision = (
-    comprobantesPendientes.length > 0 ||
-    conDeuda.length > 0 ||
-    parciales.length > 0 ||
-    debeYHabilitado.length > 0 ||
-    pagadoYBloqueado.length > 0
-  );
-  const estadoGeneral = requiereRevision ? 'Requiere revision' : 'Listo para cierre operativo';
+  const { mes: mesNormalizado, resumen, comprobantesPendientes } = datos;
+  const requiereRevision = comprobantesPendientes.length > 0;
+  const estadoGeneral = requiereRevision ? 'REQUIERE REVISION' : 'LISTO PARA REVISION OPERATIVA';
   const estadoClassName = requiereRevision ? 'warning' : 'ok';
 
   const checks = [
     cierreCheckItem({
-      titulo: 'Backup mensual',
+      titulo: 'Total cargos del periodo',
       estado: 'info',
-      detalle: 'Recordatorio',
-      texto: 'Descargar backup mensual desde Exportacion antes de dar por cerrado el mes.',
-      destino: 'exportacion'
+      detalle: formatARS(resumen.totalCargosPeriodo),
+      texto: 'Suma de total_cargos_mes.'
+    }),
+    cierreCheckItem({
+      titulo: 'Total pagos del periodo',
+      estado: 'info',
+      detalle: formatARS(resumen.totalPagosPeriodo),
+      texto: 'Suma de pagos_del_mes.'
+    }),
+    cierreCheckItem({
+      titulo: 'Pendiente total actual',
+      estado: resumen.pendienteTotalActual > 0.01 ? 'warning' : 'ok',
+      detalle: formatARS(resumen.pendienteTotalActual),
+      texto: 'La deuda no bloquea el cierre operativo.'
+    }),
+    cierreCheckItem({
+      titulo: 'Saldo a favor total',
+      estado: resumen.saldoAFavorTotal > 0.01 ? 'info' : 'soft',
+      detalle: formatARSNegativoVisual(resumen.saldoAFavorTotal),
+      texto: 'Saldo a favor informado por la cuenta corriente.'
     }),
     cierreCheckItem({
       titulo: 'Comprobantes pendientes',
       estado: comprobantesPendientes.length ? 'warning' : 'ok',
       detalle: `${comprobantesPendientes.length} pendiente(s)`,
-      texto: comprobantesPendientes.length ? 'Revisar Comprobantes.' : 'Sin comprobantes pendientes del mes.',
+      texto: comprobantesPendientes.length ? 'Requiere revision.' : 'Sin comprobantes pendientes.',
       destino: comprobantesPendientes.length ? 'comprobantes' : ''
     }),
     cierreCheckItem({
-      titulo: 'Pagos pendientes',
-      estado: conDeuda.length ? 'warning' : 'ok',
-      detalle: `${conDeuda.length} persona(s) - ${formatARS(totalPendiente)}`,
-      texto: conDeuda.length ? 'Revisar mensajes de cobro o pagos.' : 'Sin personas activas con pendiente hoy.',
-      destino: conDeuda.length ? 'pagos' : ''
+      titulo: 'Personas con deuda',
+      estado: resumen.conDeuda ? 'warning' : 'ok',
+      detalle: `${resumen.conDeuda} persona(s)`,
+      texto: 'Informativo. No bloquea el cierre.'
     }),
     cierreCheckItem({
-      titulo: 'Pagos parciales',
-      estado: parciales.length ? 'warning' : 'ok',
-      detalle: `${parciales.length} persona(s)`,
-      texto: parciales.length ? 'Hay pagos registrados con saldo pendiente.' : 'Sin pagos parciales pendientes.',
-      destino: parciales.length ? 'pagos' : ''
-    }),
-    cierreCheckItem({
-      titulo: 'Saldo a favor',
-      estado: 'info',
-      detalle: `${saldoFavor.length} persona(s) - ${formatARSNegativoVisual(totalSaldoFavor)}`,
-      texto: 'Informativo. No bloquea el cierre operativo.'
-    }),
-    cierreCheckItem({
-      titulo: 'Router: debe y esta habilitado',
-      estado: debeYHabilitado.length ? 'critical' : 'ok',
-      detalle: `${debeYHabilitado.length} persona(s)`,
-      texto: debeYHabilitado.length ? 'Bloquear MAC en router o revisar pago.' : 'Sin personas deudoras habilitadas.',
-      destino: debeYHabilitado.length ? 'router' : ''
-    }),
-    cierreCheckItem({
-      titulo: 'Router: pago y esta bloqueado',
-      estado: pagadoYBloqueado.length ? 'warning' : 'ok',
-      detalle: `${pagadoYBloqueado.length} persona(s)`,
-      texto: pagadoYBloqueado.length ? 'Habilitar MAC en router.' : 'Sin personas al dia bloqueadas.',
-      destino: pagadoYBloqueado.length ? 'router' : ''
-    }),
-    cierreCheckItem({
-      titulo: 'Personas sin MAC',
-      estado: sinMac.length ? 'soft' : 'ok',
-      detalle: `${sinMac.length} persona(s)`,
-      texto: sinMac.length ? 'Informativo / advertencia suave. Pedir o cargar MAC.' : 'Todas las personas activas tienen MAC cargada.',
-      destino: sinMac.length ? 'personas' : ''
-    }),
-    cierreCheckItem({
-      titulo: 'Comprobantes descartados',
-      estado: 'info',
-      detalle: `${comprobantesDescartados.length} descartado(s)`,
-      texto: 'Informativo. No bloquea el cierre operativo.',
-      destino: comprobantesDescartados.length ? 'comprobantes' : ''
-    }),
-    cierreCheckItem({
-      titulo: 'Mensajes de cobro',
-      estado: 'info',
-      detalle: 'Recordatorio',
-      texto: 'Verificar manualmente que los mensajes necesarios hayan sido enviados.',
-      destino: 'mensajes'
+      titulo: 'Personas con saldo a favor',
+      estado: resumen.saldoAFavor ? 'info' : 'soft',
+      detalle: `${resumen.saldoAFavor} persona(s)`,
+      texto: 'Informativo. No bloquea el cierre.'
     })
   ];
 
-  const pendientesRows = comprobantesPendientes.map((comprobante) => {
-    const persona = state.personas.find((item) => mismaPersona(item.id, comprobante.persona_id));
-    return `
-      <tr>
-        <td>${escapeHtml(persona?.nombre || 'Sin persona')}</td>
-        <td>${escapeHtml(comprobante.mes_aplicado || '')}</td>
-        <td class="number">${comprobante.monto_informado == null ? '-' : formatARS(comprobante.monto_informado)}</td>
-        <td>${escapeHtml(new Date(comprobante.created_at).toLocaleString('es-AR'))}</td>
-        <td><button type="button" data-cierre-nav="comprobantes">Comprobantes</button></td>
-      </tr>
-    `;
-  });
-  const deudaRows = conDeuda.map((item) => `
-    <tr>
-      <td>${escapeHtml(item.persona.nombre)}</td>
-      <td class="number">${formatARS(item.cuenta.totalDelMes)}</td>
-      <td class="number">${formatARS(item.cuenta.pagado)}</td>
-      <td class="number pending-due">${formatARS(item.cuenta.pendiente)}</td>
-      <td><span class="status-pill status-${estadoClass(item.cuenta.estado)}">${escapeHtml(item.cuenta.estado)}</span></td>
-    </tr>
-  `);
-  const parcialesRows = parciales.map((item) => `
-    <tr>
-      <td>${escapeHtml(item.persona.nombre)}</td>
-      <td class="number">${formatARS(item.cuenta.pagado)}</td>
-      <td class="number pending-due">${formatARS(item.cuenta.pendiente)}</td>
-    </tr>
-  `);
-  const routerRows = [
-    ...debeYHabilitado.map((item) => ({
-      persona: item.persona.nombre,
-      estadoCuenta: item.cuenta.estado,
-      routerEstado: item.routerEstado,
-      accion: 'Bloquear MAC en router o revisar pago.'
-    })),
-    ...pagadoYBloqueado.map((item) => ({
-      persona: item.persona.nombre,
-      estadoCuenta: item.cuenta.estado,
-      routerEstado: item.routerEstado,
-      accion: 'Habilitar MAC en router.'
-    }))
-  ].map((item) => `
-    <tr>
-      <td>${escapeHtml(item.persona)}</td>
-      <td>${escapeHtml(item.estadoCuenta)}</td>
-      <td>${escapeHtml(item.routerEstado)}</td>
-      <td>${escapeHtml(item.accion)}</td>
-    </tr>
-  `);
-
   container.innerHTML = `
     <article class="cierre-status cierre-status-${estadoClassName}">
-      <span>Estado de cierre del mes ${escapeHtml(formatMesCuenta(mes))}</span>
+      <span>Estado de cierre del mes ${escapeHtml(formatMesCuenta(mesNormalizado))}</span>
       <strong>${escapeHtml(estadoGeneral)}</strong>
       <p>Checklist operativo de solo lectura. No cierra ni bloquea el mes.</p>
-      <button type="button" class="primary" data-cierre-paquete>Generar paquete de cierre</button>
     </article>
     <div class="cierre-checklist">${checks.join('')}</div>
-    ${cierreDetalleTable('Detalle de comprobantes pendientes', ['Persona', 'Mes', 'Monto informado', 'Fecha de carga', 'Accion'], pendientesRows)}
-    ${cierreDetalleTable('Detalle de personas con deuda', ['Persona', 'Total del mes', 'Pagado', 'Pendiente hoy', 'Estado'], deudaRows)}
-    ${cierreDetalleTable('Detalle de pagos parciales', ['Persona', 'Pagado', 'Pendiente hoy'], parcialesRows)}
-    ${cierreDetalleTable('Detalle de alertas router', ['Persona', 'Estado cuenta', 'Router', 'Accion sugerida'], routerRows)}
   `;
 }
 

@@ -379,6 +379,7 @@ main {
 
 .metric {
   border: 1px solid var(--line);
+  border-left: 5px solid var(--line);
   border-radius: 8px;
   padding: 14px;
   background: #fbfcfb;
@@ -395,6 +396,39 @@ main {
   display: block;
   margin-top: 7px;
   font-size: 1.35rem;
+}
+
+.metric small {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.metric-ok {
+  border-left-color: var(--ok);
+}
+
+.metric-warning {
+  border-left-color: #d8a20f;
+}
+
+.metric-danger {
+  border-left-color: var(--danger);
+}
+
+.metric-neutral {
+  border-left-color: var(--muted);
+}
+
+.dashboard-metric-grid {
+  margin-bottom: 18px;
+}
+
+.dashboard-lists {
+  display: grid;
+  gap: 16px;
 }
 
 .table-wrap {
